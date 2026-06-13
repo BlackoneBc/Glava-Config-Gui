@@ -28,12 +28,11 @@ class GlavaConfigurator(Adw.Application):
         # Geometrie-Speicher
         self.monitors_data = []
         self.canvas_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
-        self.main_monitor_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
         
         # Drag-Status
         self.drag_start_gx = 0
         self.drag_start_gy = 0
-        self.is_dragging_box = False  # Verhindert Springen bei Klicks außerhalb der Box
+        self.is_dragging_box = False
 
     def ensure_config_exists(self, force=False):
         if force and os.path.exists(CONFIG_DIR):
@@ -53,7 +52,7 @@ class GlavaConfigurator(Adw.Application):
 
         window = Adw.ApplicationWindow(application=self)
         window.set_title("Glava Control Center")
-        window.set_default_size(620, 850)
+        window.set_default_size(650, 950)
 
         self.load_canvas_geometry()
 
@@ -146,11 +145,13 @@ class GlavaConfigurator(Adw.Application):
         row_y.add_suffix(self.spin_y)
         group_geo.add(row_y)
 
-        center_btn = Gtk.Button(label="In der Mitte platzieren")
-        center_btn.set_valign(Gtk.Align.CENTER)
-        center_btn.connect("clicked", self.on_center_clicked)
-        row_center = Adw.ActionRow(title="Ausrichtung (Hauptbildschirm)")
-        row_center.add_suffix(center_btn)
+        # Menü-Button zum Zentrieren auf spezifischen Monitoren
+        self.center_menu_btn = Gtk.MenuButton(label="Monitor auswählen...")
+        self.center_menu_btn.set_valign(Gtk.Align.CENTER)
+        self.build_center_popover()
+        
+        row_center = Adw.ActionRow(title="In der Mitte platzieren auf:")
+        row_center.add_suffix(self.center_menu_btn)
         group_geo.add(row_center)
 
         # === GRUPPE 3: FARBEN & OUTLINES ===
@@ -171,16 +172,16 @@ class GlavaConfigurator(Adw.Application):
         row_outline.add_suffix(self.outline_switch)
         group_color.add(row_outline)
 
-        # === GRUPPE 4: LIVE VORSCHAU ===
+        # === GRUPPE 4: LIVE VORSCHAU (VERGRÖSSERT) ===
         group_preview = Adw.PreferencesGroup(title="Leinwand Vorschau")
         main_box.append(group_preview)
         
         self.preview_area = Gtk.DrawingArea()
-        self.preview_area.set_content_width(220)
-        self.preview_area.set_content_height(140)
+        # Deutlich vergrößertes Vorschaufeld für präzises Arbeiten
+        self.preview_area.set_content_width(450)
+        self.preview_area.set_content_height(280)
         self.preview_area.set_draw_func(self.draw_preview_box)
         
-        # Drag & Drop Interaktion für die Vorschau
         self.drag_gesture = Gtk.GestureDrag.new()
         self.drag_gesture.connect("drag-begin", self.on_drag_begin)
         self.drag_gesture.connect("drag-update", self.on_drag_update)
@@ -229,7 +230,7 @@ class GlavaConfigurator(Adw.Application):
         self.load_config()
 
     # ─────────────────────────────────────────────
-    #  Drag & Drop Events für die Vorschau-Box
+    #  Drag & Drop Events (Begrenzt auf Monitor-Raum)
     # ─────────────────────────────────────────────
     def on_drag_begin(self, gesture, start_x, start_y):
         w = self.preview_area.get_width()
@@ -245,7 +246,6 @@ class GlavaConfigurator(Adw.Application):
         offset_x = (w - (canvas_w * scale)) / 2
         offset_y = (h - (canvas_h * scale)) / 2
 
-        # Aktuelle visuelle Position der blauen Box im Widget ermitteln
         gw = int(self.spin_width.get_value())
         gh = int(self.spin_height.get_value())
         gx = int(self.spin_x.get_value())
@@ -256,7 +256,6 @@ class GlavaConfigurator(Adw.Application):
         bw = gw * scale
         bh = gh * scale
 
-        # Prüfen, ob der Klick wirklich INNERHALB der blauen Box war
         if bx <= start_x <= (bx + bw) and by <= start_y <= (by + bh):
             self.is_dragging_box = True
             self.drag_start_gx = gx
@@ -276,11 +275,21 @@ class GlavaConfigurator(Adw.Application):
         scale = min((w - 20) / canvas_w, (h - 20) / canvas_h)
         
         if scale > 0:
-            # Pixel-Verschiebung präzise zurückrechnen
             new_x = self.drag_start_gx + (offset_x / scale)
             new_y = self.drag_start_gy + (offset_y / scale)
             
-            # Blockiert Signale kurzzeitig, damit das Zeichnen geschmeidig bleibt
+            gw = int(self.spin_width.get_value())
+            gh = int(self.spin_height.get_value())
+
+            # Begrenzung: Das Kästchen darf das virtuelle Monitor-Layout nicht verlassen
+            min_allowed_x = self.canvas_geo["x"]
+            max_allowed_x = self.canvas_geo["x"] + self.canvas_geo["width"] - gw
+            min_allowed_y = self.canvas_geo["y"]
+            max_allowed_y = self.canvas_geo["y"] + self.canvas_geo["height"] - gh
+
+            new_x = max(min_allowed_x, min(new_x, max_allowed_x))
+            new_y = max(min_allowed_y, min(new_y, max_allowed_y))
+            
             self.spin_x.handler_block_by_func(self.on_geometry_changed)
             self.spin_y.handler_block_by_func(self.on_geometry_changed)
             
@@ -290,11 +299,10 @@ class GlavaConfigurator(Adw.Application):
             self.spin_x.handler_unblock_by_func(self.on_geometry_changed)
             self.spin_y.handler_unblock_by_func(self.on_geometry_changed)
             
-            # Live-Update der Zeichnung erzwingen
             self.preview_area.queue_draw()
 
     # ─────────────────────────────────────────────
-    #  Monitor-Erkennung & Zeichnen
+    #  Monitor-Erkennung & Dynamisches Zentrier-Menü
     # ─────────────────────────────────────────────
     def load_canvas_geometry(self):
         display = Gdk.Display.get_default()
@@ -304,21 +312,15 @@ class GlavaConfigurator(Adw.Application):
         
         if monitors.get_n_items() == 0:
             self.canvas_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
-            self.main_monitor_geo = self.canvas_geo
             return
             
         min_x, min_y = float('inf'), float('inf')
         max_x, max_y = float('-inf'), float('-inf')
         
-        main_monitor = monitors.get_item(0)
-        
         for i in range(monitors.get_n_items()):
             monitor = monitors.get_item(i)
             geo = monitor.get_geometry()
             self.monitors_data.append(geo)
-            
-            if geo.x == 0 and geo.y == 0:
-                main_monitor = monitor
                 
             min_x = min(min_x, geo.x)
             min_y = min(min_y, geo.y)
@@ -331,14 +333,43 @@ class GlavaConfigurator(Adw.Application):
             "width": int(max_x - min_x),
             "height": int(max_y - min_y)
         }
+
+    def build_center_popover(self):
+        """Erstellt eine Liste aller Monitore im Dropdown-Menü zum präzisen Zentrieren."""
+        popover = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+
+        for i, m in enumerate(self.monitors_data):
+            # Text für die Monitore generieren (z.B. "Monitor 1 (1920x1080)")
+            btn_label = f"Monitor {i + 1} ({m.width}x{m.height})"
+            if m.x == 0 and m.y == 0:
+                btn_label += " [Hauptbildschirm]"
+                
+            btn = Gtk.Button(label=btn_label)
+            # Monitor-Index über Lambda-Funktion sichern
+            btn.connect("clicked", lambda b, index=i: self.center_on_specific_monitor(index, popover))
+            box.append(btn)
+
+        popover.set_child(box)
+        self.center_menu_btn.set_popover(popover)
+
+    def center_on_specific_monitor(self, idx, popover):
+        """Zentriert das Glava-Fenster exakt auf dem ausgewählten Monitor."""
+        popover.popdown()
+        m = self.monitors_data[idx]
         
-        m_geo = main_monitor.get_geometry()
-        self.main_monitor_geo = {
-            "x": int(m_geo.x),
-            "y": int(m_geo.y),
-            "width": int(m_geo.width),
-            "height": int(m_geo.height)
-        }
+        w = int(self.spin_width.get_value())
+        h = int(self.spin_height.get_value())
+        
+        x = m.x + (m.width // 2) - (w // 2)
+        y = m.y + (m.height // 2) - (h // 2)
+        
+        self.spin_x.set_value(x)
+        self.spin_y.set_value(y)
 
     def draw_preview_box(self, drawing_area, cr, width, height):
         cr.set_source_rgb(0.12, 0.12, 0.12)
@@ -355,7 +386,7 @@ class GlavaConfigurator(Adw.Application):
         offset_y = (height - (canvas_h * scale)) / 2
 
         # 1. Monitore zeichnen
-        for m in self.monitors_data:
+        for i, m in enumerate(self.monitors_data):
             mx = offset_x + (m.x - self.canvas_geo["x"]) * scale
             my = offset_y + (m.y - self.canvas_geo["y"]) * scale
             mw = m.width * scale
@@ -492,14 +523,6 @@ class GlavaConfigurator(Adw.Application):
         else:
             if os.path.exists(AUTOSTART_FILE):
                 os.remove(AUTOSTART_FILE)
-
-    def on_center_clicked(self, btn):
-        w = int(self.spin_width.get_value())
-        h = int(self.spin_height.get_value())
-        x = self.main_monitor_geo["x"] + (self.main_monitor_geo["width"] // 2) - (w // 2)
-        y = self.main_monitor_geo["y"] + (self.main_monitor_geo["height"] // 2) - (h // 2)
-        self.spin_x.set_value(x)
-        self.spin_y.set_value(y)
 
     def on_reset_config_clicked(self, btn):
         self.ensure_config_exists(force=True)
