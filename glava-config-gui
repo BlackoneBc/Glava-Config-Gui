@@ -145,7 +145,6 @@ class GlavaConfigurator(Adw.Application):
         row_y.add_suffix(self.spin_y)
         group_geo.add(row_y)
 
-        # Menü-Button zum Zentrieren auf spezifischen Monitoren
         self.center_menu_btn = Gtk.MenuButton(label="Monitor auswählen...")
         self.center_menu_btn.set_valign(Gtk.Align.CENTER)
         self.build_center_popover()
@@ -161,7 +160,7 @@ class GlavaConfigurator(Adw.Application):
         self.color_dialog = Gtk.ColorDialog()
         self.color_btn = Gtk.ColorDialogButton(dialog=self.color_dialog)
         self.color_btn.set_valign(Gtk.Align.CENTER)
-        row_color = Adw.ActionRow(title="Hauptfarbe & Deckkraft")
+        row_color = Adw.ActionRow(title="Farbe")
         row_color.add_suffix(self.color_btn)
         group_color.add(row_color)
 
@@ -172,24 +171,30 @@ class GlavaConfigurator(Adw.Application):
         row_outline.add_suffix(self.outline_switch)
         group_color.add(row_outline)
 
-        # === GRUPPE 4: LIVE VORSCHAU ===
-        group_preview = Adw.PreferencesGroup(title="Leinwand Vorschau")
+        # === GRUPPE 4: LIVE VORSCHAU (LAYOUT OPTIMIERT) ===
+        group_preview = Adw.PreferencesGroup(title="Vorschau")
         main_box.append(group_preview)
+        
+        # Ein vertikaler Container, damit der Titel sauber drüber steht und links nichts frei bleibt
+        preview_layout_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        preview_layout_box.set_margin_top(8)
+        preview_layout_box.set_margin_bottom(8)
+        preview_layout_box.set_margin_start(8)
+        preview_layout_box.set_margin_end(8)
         
         self.preview_area = Gtk.DrawingArea()
         self.preview_area.set_content_width(450)
         self.preview_area.set_content_height(280)
         self.preview_area.set_draw_func(self.draw_preview_box)
+        self.preview_area.set_halign(Gtk.Align.CENTER)
         
         self.drag_gesture = Gtk.GestureDrag.new()
         self.drag_gesture.connect("drag-begin", self.on_drag_begin)
         self.drag_gesture.connect("drag-update", self.on_drag_update)
         self.preview_area.add_controller(self.drag_gesture)
         
-        # Geändert von "Vorschau (Alle Monitore, ziehbar)" zu "Vorschau"
-        row_preview = Adw.ActionRow(title="Vorschau")
-        row_preview.add_suffix(self.preview_area)
-        group_preview.add(row_preview)
+        preview_layout_box.append(self.preview_area)
+        group_preview.add(preview_layout_box)
 
         # === GRUPPE 5: RESET BUTTONS ===
         group_resets = Adw.PreferencesGroup()
@@ -319,7 +324,31 @@ class GlavaConfigurator(Adw.Application):
         for i in range(monitors.get_n_items()):
             monitor = monitors.get_item(i)
             geo = monitor.get_geometry()
-            self.monitors_data.append(geo)
+            
+            model_name = monitor.get_model()
+            manufacturer = monitor.get_manufacturer()
+            connector = monitor.get_connector()
+            
+            name_parts = []
+            if manufacturer: name_parts.append(manufacturer)
+            if model_name: name_parts.append(model_name)
+            
+            full_title = " ".join(name_parts)
+            if not full_title and connector:
+                full_title = f"Anschluss {connector}"
+            if not full_title:
+                full_title = f"Monitor {i + 1}"
+                
+            is_main = (geo.x == 0 and geo.y == 0)
+            
+            self.monitors_data.append({
+                "x": geo.x,
+                "y": geo.y,
+                "width": geo.width,
+                "height": geo.height,
+                "title": full_title,
+                "is_main": is_main
+            })
                 
             min_x = min(min_x, geo.x)
             min_y = min(min_y, geo.y)
@@ -342,8 +371,8 @@ class GlavaConfigurator(Adw.Application):
         box.set_margin_end(6)
 
         for i, m in enumerate(self.monitors_data):
-            btn_label = f"Monitor {i + 1} ({m.width}x{m.height})"
-            if m.x == 0 and m.y == 0:
+            btn_label = f"{m['title']} ({m['width']}x{m['height']})"
+            if m['is_main']:
                 btn_label += " [Hauptbildschirm]"
                 
             btn = Gtk.Button(label=btn_label)
@@ -360,8 +389,8 @@ class GlavaConfigurator(Adw.Application):
         w = int(self.spin_width.get_value())
         h = int(self.spin_height.get_value())
         
-        x = m.x + (m.width // 2) - (w // 2)
-        y = m.y + (m.height // 2) - (h // 2)
+        x = m["x"] + (m["width"] // 2) - (w // 2)
+        y = m["y"] + (m["height"] // 2) - (h // 2)
         
         self.spin_x.set_value(x)
         self.spin_y.set_value(y)
@@ -382,10 +411,10 @@ class GlavaConfigurator(Adw.Application):
 
         # 1. Monitore zeichnen
         for i, m in enumerate(self.monitors_data):
-            mx = offset_x + (m.x - self.canvas_geo["x"]) * scale
-            my = offset_y + (m.y - self.canvas_geo["y"]) * scale
-            mw = m.width * scale
-            mh = m.height * scale
+            mx = offset_x + (m["x"] - self.canvas_geo["x"]) * scale
+            my = offset_y + (m["y"] - self.canvas_geo["y"]) * scale
+            mw = m["width"] * scale
+            mh = m["height"] * scale
 
             cr.set_source_rgb(0.25, 0.25, 0.25)
             cr.rectangle(mx, my, mw, mh)
