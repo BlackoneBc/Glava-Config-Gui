@@ -33,6 +33,36 @@ check_sudo() {
     fi
 }
 
+# Check if AUR helper is installed
+check_aur_helper() {
+    if command -v yay &> /dev/null; then
+        echo "yay"
+    elif command -v paru &> /dev/null; then
+        echo "paru"
+    else
+        echo ""
+    fi
+}
+
+# Install glava from AUR on Arch
+install_glava_aur() {
+    local aur_helper=$1
+    echo -e "${YELLOW}Installing glava from AUR...${NC}"
+    
+    if [ "$aur_helper" == "yay" ]; then
+        yay -S --noconfirm glava
+    elif [ "$aur_helper" == "paru" ]; then
+        paru -S --noconfirm glava
+    else
+        echo -e "${RED}No AUR helper found (yay or paru required)${NC}"
+        echo -e "${YELLOW}Please install yay or paru first:${NC}"
+        echo "  sudo pacman -S yay"
+        echo "  or"
+        echo "  sudo pacman -S paru"
+        exit 1
+    fi
+}
+
 # Install dependencies based on distro
 install_dependencies() {
     case "$OS" in
@@ -48,7 +78,11 @@ install_dependencies() {
         arch|manjaro|arcolinux)
             echo -e "${YELLOW}Installing dependencies for Arch/Manjaro...${NC}"
             check_sudo
-            sudo pacman -Sy --noconfirm python python-gobject gtk4 libadwaita psmisc glava
+            sudo pacman -Sy --noconfirm python python-gobject gtk4 libadwaita psmisc
+            
+            # Install glava from AUR
+            local aur_helper=$(check_aur_helper)
+            install_glava_aur "$aur_helper"
             ;;
         
         # Fedora/RHEL/CentOS
