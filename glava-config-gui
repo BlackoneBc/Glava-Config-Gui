@@ -4,7 +4,6 @@ import os
 import subprocess
 import shutil
 
-# GTK4 und Libadwaita initialisieren
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
@@ -39,7 +38,6 @@ class GlavaConfigurator(Adw.Application):
                 subprocess.run(["glava", "--copy-config"], check=False)
 
     def do_activate(self):
-        # Darkmode immer erzwingen
         style_manager = Adw.StyleManager.get_default()
         style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
 
@@ -47,10 +45,8 @@ class GlavaConfigurator(Adw.Application):
         window.set_title("Glava Control Center")
         window.set_default_size(620, 850)
 
-        # Desktop-Größe für Vorschau berechnen
         self.load_canvas_geometry()
 
-        # Header Bar
         header = Adw.HeaderBar()
         
         self.toggle_btn = Gtk.ToggleButton(label="Glava Starten")
@@ -110,7 +106,6 @@ class GlavaConfigurator(Adw.Application):
         self.vis_combo = Adw.ComboRow(title="Visualizer Typ", model=vis_types)
         group_geo.add(self.vis_combo)
 
-        # SpinButtons mit set_valign(Gtk.Align.CENTER), um Strecken zu verhindern
         self.spin_width = Gtk.SpinButton.new_with_range(100, 5000, 10)
         self.spin_width.set_value(600)
         self.spin_width.set_valign(Gtk.Align.CENTER)
@@ -127,7 +122,6 @@ class GlavaConfigurator(Adw.Application):
         row_height.add_suffix(self.spin_height)
         group_geo.add(row_height)
 
-        # Range bis -10000 erweitert, falls Monitore links vom Hauptmonitor stehen
         self.spin_x = Gtk.SpinButton.new_with_range(-10000, 10000, 10)
         self.spin_x.set_valign(Gtk.Align.CENTER)
         self.spin_x.connect("value-changed", self.on_geometry_changed)
@@ -143,7 +137,7 @@ class GlavaConfigurator(Adw.Application):
         group_geo.add(row_y)
 
         center_btn = Gtk.Button(label="In der Mitte platzieren")
-        center_btn.set_valign(Gtk.Align.CENTER) # Verhindert, dass der Button riesig wird
+        center_btn.set_valign(Gtk.Align.CENTER)
         center_btn.connect("clicked", self.on_center_clicked)
         row_center = Adw.ActionRow(title="Ausrichtung")
         row_center.add_suffix(center_btn)
@@ -167,7 +161,7 @@ class GlavaConfigurator(Adw.Application):
         row_outline.add_suffix(self.outline_switch)
         group_color.add(row_outline)
 
-        # === GRUPPE 4: LIVE VORSCHAU (GESAMTER DESKTOP) ===
+        # === GRUPPE 4: LIVE VORSCHAU ===
         group_preview = Adw.PreferencesGroup(title="Leinwand Vorschau")
         main_box.append(group_preview)
         
@@ -186,7 +180,7 @@ class GlavaConfigurator(Adw.Application):
 
         reset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         reset_box.set_homogeneous(True)
-        reset_box.set_valign(Gtk.Align.CENTER) 
+        reset_box.set_valign(Gtk.Align.CENTER)
 
         btn_reset_config = Gtk.Button(label="Config zurücksetzen")
         btn_reset_config.add_css_class("destructive-action")
@@ -213,8 +207,97 @@ class GlavaConfigurator(Adw.Application):
         window.set_content(toolbar_view)
         window.present()
 
+        # Aktuelle Config beim Start einlesen
+        self.load_config()
+
+    # ─────────────────────────────────────────────
+    #  NEU: Config beim Start lesen
+    # ─────────────────────────────────────────────
+
+    def load_config(self):
+        """Liest rc.glsl und befüllt die UI mit den aktuellen Werten."""
+        if not os.path.exists(RC_FILE):
+            return
+
+        with open(RC_FILE, "r") as f:
+            lines = f.readlines()
+
+        current_vis = "radial"   # Fallback für Modul-Datei
+
+        for line in lines:
+            s = line.strip()
+
+            if s.startswith("#request setgeometry"):
+                parts = s.split()
+                if len(parts) == 6:
+                    self.spin_x.set_value(int(parts[2]))
+                    self.spin_y.set_value(int(parts[3]))
+                    self.spin_width.set_value(int(parts[4]))
+                    self.spin_height.set_value(int(parts[5]))
+
+            elif s.startswith("#request setxwintype"):
+                val = s.split('"')[1] if '"' in s else "desktop"
+                modes = ["desktop", "normal", "!"]
+                if val in modes:
+                    self.mode_combo.set_selected(modes.index(val))
+
+            elif s.startswith("#request setclickthrough"):
+                parts = s.split()
+                if len(parts) == 3:
+                    self.clickthrough_switch.set_active(parts[2] == "true")
+
+            elif s.startswith('#request addxwinstate "below"'):
+                self.background_switch.set_active(True)
+
+            elif s.startswith("#request mod"):
+                parts = s.split()
+                if len(parts) == 3:
+                    current_vis = parts[2]
+                    vis_types = ["radial", "graph", "wave", "circle", "bars"]
+                    if current_vis in vis_types:
+                        self.vis_combo.set_selected(vis_types.index(current_vis))
+
+        # Farbe + Outline aus der Modul-Datei lesen
+        mod_file = os.path.join(CONFIG_DIR, f"{current_vis}.glsl")
+        if os.path.exists(mod_file):
+            with open(mod_file, "r") as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith("#define COLOR") or s.startswith("#define BAR_COLOR"):
+                        hex_val = s.split()[-1].strip()
+                        rgba = self._hex_to_rgba(hex_val)
+                        if rgba:
+                            self.color_btn.set_rgba(rgba)
+                    elif s.startswith("#define OUTLINE"):
+                        hex_val = s.split()[-1].strip()
+                        self.outline_switch.set_active(
+                            not hex_val.endswith("00") and hex_val != "#00000000"
+                        )
+
+        self.preview_area.queue_draw()
+
+    def _hex_to_rgba(self, hex_str):
+        """Konvertiert #rrggbbaa oder #rrggbb zu Gdk.RGBA."""
+        hex_str = hex_str.lstrip("#")
+        try:
+            if len(hex_str) == 8:
+                r, g, b, a = (int(hex_str[i:i+2], 16) / 255.0 for i in (0, 2, 4, 6))
+            elif len(hex_str) == 6:
+                r, g, b = (int(hex_str[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+                a = 1.0
+            else:
+                return None
+            rgba = Gdk.RGBA()
+            rgba.red, rgba.green, rgba.blue, rgba.alpha = r, g, b, a
+            return rgba
+        except ValueError:
+            return None
+
+    # ─────────────────────────────────────────────
+    #  Vorhandene Methoden (unverändert)
+    # ─────────────────────────────────────────────
+
     def load_canvas_geometry(self):
-        """Berechnet die Bounding-Box (die Gesamtgröße) über alle Monitore hinweg."""
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
         
@@ -241,7 +324,7 @@ class GlavaConfigurator(Adw.Application):
         }
 
     def draw_preview_box(self, drawing_area, cr, width, height):
-        cr.set_source_rgb(0.18, 0.18, 0.18) 
+        cr.set_source_rgb(0.18, 0.18, 0.18)
         cr.rectangle(10, 10, width - 20, height - 20)
         cr.fill()
 
@@ -250,8 +333,6 @@ class GlavaConfigurator(Adw.Application):
         cr.rectangle(10, 10, width - 20, height - 20)
         cr.stroke()
 
-        mon_x = self.canvas_geo["x"]
-        mon_y = self.canvas_geo["y"]
         mon_w = self.canvas_geo["width"]
         mon_h = self.canvas_geo["height"]
 
@@ -266,8 +347,8 @@ class GlavaConfigurator(Adw.Application):
         gx = int(self.spin_x.get_value())
         gy = int(self.spin_y.get_value())
 
-        rel_x = gx - mon_x
-        rel_y = gy - mon_y
+        rel_x = gx - self.canvas_geo["x"]
+        rel_y = gy - self.canvas_geo["y"]
 
         box_x = 10 + (rel_x * scale_x)
         box_y = 10 + (rel_y * scale_y)
@@ -280,11 +361,11 @@ class GlavaConfigurator(Adw.Application):
         box_h = min(box_h, height - 10 - box_y)
 
         if box_w > 0 and box_h > 0:
-            cr.set_source_rgba(0.1, 0.45, 0.85, 0.55) 
+            cr.set_source_rgba(0.1, 0.45, 0.85, 0.55)
             cr.rectangle(box_x, box_y, box_w, box_h)
             cr.fill()
 
-            cr.set_source_rgb(0.2, 0.6, 1.0) 
+            cr.set_source_rgb(0.2, 0.6, 1.0)
             cr.set_line_width(1.5)
             cr.rectangle(box_x, box_y, box_w, box_h)
             cr.stroke()
@@ -295,12 +376,12 @@ class GlavaConfigurator(Adw.Application):
     def on_autostart_toggled(self, switch, gparam):
         os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
         if switch.get_active():
-            if os.path.exists('/.flatpak-info'):
-                exec_cmd = "flatpak run com.blackonebc.GlavaControlCenter"
-            else:
-                exec_cmd = "glava-config-gui"
-                
-            desktop_entry = f"[Desktop Entry]\nType=Application\nExec={exec_cmd}\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\nName=Glava\n"
+            exec_cmd = "flatpak run com.blackonebc.GlavaControlCenter" if os.path.exists('/.flatpak-info') else "glava-config-gui"
+            desktop_entry = (
+                "[Desktop Entry]\nType=Application\n"
+                f"Exec={exec_cmd}\nHidden=false\nNoDisplay=false\n"
+                "X-GNOME-Autostart-enabled=true\nName=Glava\n"
+            )
             with open(AUTOSTART_FILE, "w") as f:
                 f.write(desktop_entry)
         else:
@@ -308,13 +389,10 @@ class GlavaConfigurator(Adw.Application):
                 os.remove(AUTOSTART_FILE)
 
     def on_center_clicked(self, btn):
-        # Zentriert Glava auf der gesamten Desktop-Leinwand
         w = int(self.spin_width.get_value())
         h = int(self.spin_height.get_value())
-        
         x = self.canvas_geo["x"] + (self.canvas_geo["width"] // 2) - (w // 2)
         y = self.canvas_geo["y"] + (self.canvas_geo["height"] // 2) - (h // 2)
-        
         self.spin_x.set_value(x)
         self.spin_y.set_value(y)
         self.preview_area.queue_draw()
@@ -355,7 +433,6 @@ class GlavaConfigurator(Adw.Application):
             if self.glava_process:
                 self.glava_process.terminate()
                 self.glava_process = None
-            
             if os.path.exists('/.flatpak-info'):
                 subprocess.run(["flatpak-spawn", "--host", "killall", "-q", "glava"])
             else:
@@ -381,10 +458,10 @@ class GlavaConfigurator(Adw.Application):
         h = int(self.spin_height.get_value())
         x = int(self.spin_x.get_value())
         y = int(self.spin_y.get_value())
-        
+
         modes = ["desktop", "normal", "!"]
         mode = modes[self.mode_combo.get_selected()]
-        
+
         vis_types = ["radial", "graph", "wave", "circle", "bars"]
         vis = vis_types[self.vis_combo.get_selected()]
 
@@ -397,10 +474,10 @@ class GlavaConfigurator(Adw.Application):
         new_lines = []
         for line in lines:
             sline = line.strip()
-            if (sline.startswith("#request setgeometry") or 
-                sline.startswith("#request setxwintype") or 
-                sline.startswith("#request setclickthrough") or 
-                sline.startswith("#request addxwinstate") or 
+            if (sline.startswith("#request setgeometry") or
+                sline.startswith("#request setxwintype") or
+                sline.startswith("#request setclickthrough") or
+                sline.startswith("#request addxwinstate") or
                 sline.startswith("#request mod") or
                 sline.startswith("// #request") or
                 sline.startswith("/* #request")):
@@ -410,28 +487,31 @@ class GlavaConfigurator(Adw.Application):
         new_lines.append(f"\n#request setgeometry {x} {y} {w} {h}\n")
         new_lines.append(f'#request setxwintype "{mode}"\n')
         new_lines.append(f'#request setclickthrough {clickthrough}\n')
-        
+
         if keep_below:
             new_lines.append('#request addxwinstate "below"\n')
             new_lines.append('#request addxwinstate "pinned"\n')
             new_lines.append('#request addxwinstate "skip_taskbar"\n')
             new_lines.append('#request addxwinstate "skip_pager"\n')
-            
+
         new_lines.append(f"#request mod {vis}\n")
 
         with open(RC_FILE, "w") as f:
             f.writelines(new_lines)
 
         rgba = self.color_btn.get_rgba()
-        hex_color = f"#{int(rgba.red*255):02x}{int(rgba.green*255):02x}{int(rgba.blue*255):02x}{int(rgba.alpha*255):02x}"
+        hex_color = (
+            f"#{int(rgba.red*255):02x}{int(rgba.green*255):02x}"
+            f"{int(rgba.blue*255):02x}{int(rgba.alpha*255):02x}"
+        )
         outline_color = hex_color if self.outline_switch.get_active() else "#00000000"
 
         mod_file = os.path.join(CONFIG_DIR, f"{vis}.glsl")
-        
+
         if os.path.exists(mod_file):
             with open(mod_file, "r") as f:
                 mod_lines = f.readlines()
-            
+
             new_mod_lines = []
             color_keys = ["#define COLOR", "#define BG_COLOR", "#define FG_COLOR", "#define BAR_COLOR"]
             found_keys = set()
@@ -440,14 +520,14 @@ class GlavaConfigurator(Adw.Application):
             for line in mod_lines:
                 sline = line.strip()
                 replaced = False
-                
+
                 for key in color_keys:
                     if sline.startswith(key):
                         new_mod_lines.append(f'{key} {hex_color}\n')
                         found_keys.add(key)
                         replaced = True
                         break
-                
+
                 if not replaced and sline.startswith("#define OUTLINE"):
                     new_mod_lines.append(f'#define OUTLINE {outline_color}\n')
                     outline_replaced = True
@@ -455,7 +535,7 @@ class GlavaConfigurator(Adw.Application):
 
                 if not replaced:
                     new_mod_lines.append(line)
-            
+
             if "#define COLOR" not in found_keys:
                 new_mod_lines.append(f'\n#define COLOR {hex_color}\n')
             if not outline_replaced:
@@ -463,6 +543,7 @@ class GlavaConfigurator(Adw.Application):
 
             with open(mod_file, "w") as f:
                 f.writelines(new_mod_lines)
+
 
 if __name__ == '__main__':
     app = GlavaConfigurator()
