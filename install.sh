@@ -62,7 +62,7 @@ install_dependencies() {
         opensuse|opensuse-leap|opensuse-tumbleweed)
             echo -e "${YELLOW}Installing dependencies for openSUSE...${NC}"
             check_sudo
-            sudo zypper install -y python3 python3-gobject-Gdk libgtk-4-0 libadwaita-devel psmisc glava
+            sudo zypper install -y python3 python3-gobject libgtk-4-0 libadwaita-devel psmisc glava
             ;;
         
         *)
@@ -99,21 +99,10 @@ create_desktop_entry() {
     echo -e "${YELLOW}Creating desktop entry...${NC}"
     
     DESKTOP_FILE="/usr/share/applications/glava-config-gui.desktop"
-    ICON_URL="https://raw.githubusercontent.com/BlackoneBc/Glava-Config-Gui/main/glava-config-gui.png"
-    ICON_PATH="/usr/share/pixmaps/glava-config-gui.png"
     
     check_sudo
     
-    # Download icon if exists
-    if curl -sSL --head "${ICON_URL}" | grep -q "200 OK"; then
-        sudo curl -sSL "${ICON_URL}" -o "/tmp/glava-config-gui.png"
-        sudo mv "/tmp/glava-config-gui.png" "${ICON_PATH}"
-        ICON_LINE="Icon=glava-config-gui"
-    else
-        ICON_LINE="Icon=audacious"  # Fallback to generic audio icon
-    fi
-    
-    # Create desktop entry
+    # Create desktop entry with standard settings icon
     sudo tee "${DESKTOP_FILE}" > /dev/null << EOF
 [Desktop Entry]
 Version=1.0
@@ -121,7 +110,7 @@ Type=Application
 Name=Glava Config GUI
 Comment=Configure the glava audio visualizer
 Exec=glava-config-gui
-${ICON_LINE}
+Icon=preferences-system
 Categories=Audio;Utility;
 Terminal=false
 StartupNotify=true
