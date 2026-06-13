@@ -33,6 +33,31 @@ check_sudo() {
     fi
 }
 
+# Install yay if not present
+install_yay() {
+    if command -v yay &> /dev/null; then
+        echo -e "${GREEN}✓ yay is already installed${NC}"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}Installing yay (AUR helper)...${NC}"
+    
+    # Install build dependencies
+    check_sudo
+    sudo pacman -Sy --noconfirm base-devel git
+    
+    # Clone and build yay
+    local temp_dir=$(mktemp -d)
+    cd "$temp_dir"
+    git clone https://aur.archlinux.org/yay.git
+    cd yay
+    makepkg -si --noconfirm
+    cd /
+    rm -rf "$temp_dir"
+    
+    echo -e "${GREEN}✓ yay installed successfully${NC}"
+}
+
 # Check if AUR helper is installed
 check_aur_helper() {
     if command -v yay &> /dev/null; then
@@ -54,11 +79,7 @@ install_glava_aur() {
     elif [ "$aur_helper" == "paru" ]; then
         paru -S --noconfirm glava
     else
-        echo -e "${RED}No AUR helper found (yay or paru required)${NC}"
-        echo -e "${YELLOW}Please install yay or paru first:${NC}"
-        echo "  sudo pacman -S yay"
-        echo "  or"
-        echo "  sudo pacman -S paru"
+        echo -e "${RED}No AUR helper found${NC}"
         exit 1
     fi
 }
@@ -80,8 +101,15 @@ install_dependencies() {
             check_sudo
             sudo pacman -Sy --noconfirm python python-gobject gtk4 libadwaita psmisc
             
-            # Install glava from AUR
+            # Check and install AUR helper if needed
             local aur_helper=$(check_aur_helper)
+            if [ -z "$aur_helper" ]; then
+                echo -e "${YELLOW}No AUR helper found. Installing yay...${NC}"
+                install_yay
+                aur_helper="yay"
+            fi
+            
+            # Install glava from AUR
             install_glava_aur "$aur_helper"
             ;;
         
