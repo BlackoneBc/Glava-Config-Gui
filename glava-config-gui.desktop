@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Glava Config GUI
+Comment=Configure the glava audio visualizer
+Exec=glava-config-gui
+Icon=audacious
+Categories=Audio;Utility;
+Terminal=false
+StartupNotify=true
