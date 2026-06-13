@@ -4,6 +4,7 @@ import os
 import subprocess
 import shutil
 
+# GTK4 und Libadwaita initialisieren
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
@@ -23,7 +24,16 @@ class GlavaConfigurator(Adw.Application):
         super().__init__(application_id='com.blackonebc.GlavaControlCenter')
         self.glava_process = None
         self.ensure_config_exists()
+        
+        # Geometrie-Speicher
+        self.monitors_data = []
         self.canvas_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
+        self.main_monitor_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
+        
+        # Drag-Status
+        self.drag_start_gx = 0
+        self.drag_start_gy = 0
+        self.is_dragging_box = False  # Verhindert Springen bei Klicks außerhalb der Box
 
     def ensure_config_exists(self, force=False):
         if force and os.path.exists(CONFIG_DIR):
@@ -122,14 +132,14 @@ class GlavaConfigurator(Adw.Application):
         row_height.add_suffix(self.spin_height)
         group_geo.add(row_height)
 
-        self.spin_x = Gtk.SpinButton.new_with_range(-10000, 10000, 10)
+        self.spin_x = Gtk.SpinButton.new_with_range(-10000, 10000, 1)
         self.spin_x.set_valign(Gtk.Align.CENTER)
         self.spin_x.connect("value-changed", self.on_geometry_changed)
         row_x = Adw.ActionRow(title="X Position (Links/Rechts)")
         row_x.add_suffix(self.spin_x)
         group_geo.add(row_x)
 
-        self.spin_y = Gtk.SpinButton.new_with_range(-10000, 10000, 10)
+        self.spin_y = Gtk.SpinButton.new_with_range(-10000, 10000, 1)
         self.spin_y.set_valign(Gtk.Align.CENTER)
         self.spin_y.connect("value-changed", self.on_geometry_changed)
         row_y = Adw.ActionRow(title="Y Position (Oben/Unten)")
@@ -139,7 +149,7 @@ class GlavaConfigurator(Adw.Application):
         center_btn = Gtk.Button(label="In der Mitte platzieren")
         center_btn.set_valign(Gtk.Align.CENTER)
         center_btn.connect("clicked", self.on_center_clicked)
-        row_center = Adw.ActionRow(title="Ausrichtung")
+        row_center = Adw.ActionRow(title="Ausrichtung (Hauptbildschirm)")
         row_center.add_suffix(center_btn)
         group_geo.add(row_center)
 
@@ -167,10 +177,16 @@ class GlavaConfigurator(Adw.Application):
         
         self.preview_area = Gtk.DrawingArea()
         self.preview_area.set_content_width(220)
-        self.preview_area.set_content_height(130)
+        self.preview_area.set_content_height(140)
         self.preview_area.set_draw_func(self.draw_preview_box)
         
-        row_preview = Adw.ActionRow(title="Vorschau (Gesamter Desktop)")
+        # Drag & Drop Interaktion für die Vorschau
+        self.drag_gesture = Gtk.GestureDrag.new()
+        self.drag_gesture.connect("drag-begin", self.on_drag_begin)
+        self.drag_gesture.connect("drag-update", self.on_drag_update)
+        self.preview_area.add_controller(self.drag_gesture)
+        
+        row_preview = Adw.ActionRow(title="Vorschau (Alle Monitore, ziehbar)")
         row_preview.add_suffix(self.preview_area)
         group_preview.add(row_preview)
 
@@ -184,12 +200,15 @@ class GlavaConfigurator(Adw.Application):
 
         btn_reset_config = Gtk.Button(label="Config zurücksetzen")
         btn_reset_config.add_css_class("destructive-action")
+        btn_reset_config.set_valign(Gtk.Align.CENTER)
         btn_reset_config.connect("clicked", self.on_reset_config_clicked)
 
         btn_reset_size = Gtk.Button(label="Größe zurücksetzen")
+        btn_reset_size.set_valign(Gtk.Align.CENTER)
         btn_reset_size.connect("clicked", self.on_reset_size_clicked)
 
         btn_reset_pos = Gtk.Button(label="Position zurücksetzen")
+        btn_reset_pos.set_valign(Gtk.Align.CENTER)
         btn_reset_pos.connect("clicked", self.on_reset_pos_clicked)
 
         reset_box.append(btn_reset_config)
@@ -207,22 +226,185 @@ class GlavaConfigurator(Adw.Application):
         window.set_content(toolbar_view)
         window.present()
 
-        # Aktuelle Config beim Start einlesen
         self.load_config()
 
     # ─────────────────────────────────────────────
-    #  NEU: Config beim Start lesen
+    #  Drag & Drop Events für die Vorschau-Box
     # ─────────────────────────────────────────────
+    def on_drag_begin(self, gesture, start_x, start_y):
+        w = self.preview_area.get_width()
+        h = self.preview_area.get_height()
+        canvas_w = self.canvas_geo["width"]
+        canvas_h = self.canvas_geo["height"]
+
+        if canvas_w == 0 or canvas_h == 0:
+            self.is_dragging_box = False
+            return
+
+        scale = min((w - 20) / canvas_w, (h - 20) / canvas_h)
+        offset_x = (w - (canvas_w * scale)) / 2
+        offset_y = (h - (canvas_h * scale)) / 2
+
+        # Aktuelle visuelle Position der blauen Box im Widget ermitteln
+        gw = int(self.spin_width.get_value())
+        gh = int(self.spin_height.get_value())
+        gx = int(self.spin_x.get_value())
+        gy = int(self.spin_y.get_value())
+
+        bx = offset_x + (gx - self.canvas_geo["x"]) * scale
+        by = offset_y + (gy - self.canvas_geo["y"]) * scale
+        bw = gw * scale
+        bh = gh * scale
+
+        # Prüfen, ob der Klick wirklich INNERHALB der blauen Box war
+        if bx <= start_x <= (bx + bw) and by <= start_y <= (by + bh):
+            self.is_dragging_box = True
+            self.drag_start_gx = gx
+            self.drag_start_gy = gy
+        else:
+            self.is_dragging_box = False
+
+    def on_drag_update(self, gesture, offset_x, offset_y):
+        if not self.is_dragging_box:
+            return
+
+        w = self.preview_area.get_width()
+        h = self.preview_area.get_height()
+        canvas_w = self.canvas_geo["width"]
+        canvas_h = self.canvas_geo["height"]
+
+        scale = min((w - 20) / canvas_w, (h - 20) / canvas_h)
+        
+        if scale > 0:
+            # Pixel-Verschiebung präzise zurückrechnen
+            new_x = self.drag_start_gx + (offset_x / scale)
+            new_y = self.drag_start_gy + (offset_y / scale)
+            
+            # Blockiert Signale kurzzeitig, damit das Zeichnen geschmeidig bleibt
+            self.spin_x.handler_block_by_func(self.on_geometry_changed)
+            self.spin_y.handler_block_by_func(self.on_geometry_changed)
+            
+            self.spin_x.set_value(int(new_x))
+            self.spin_y.set_value(int(new_y))
+            
+            self.spin_x.handler_unblock_by_func(self.on_geometry_changed)
+            self.spin_y.handler_unblock_by_func(self.on_geometry_changed)
+            
+            # Live-Update der Zeichnung erzwingen
+            self.preview_area.queue_draw()
+
+    # ─────────────────────────────────────────────
+    #  Monitor-Erkennung & Zeichnen
+    # ─────────────────────────────────────────────
+    def load_canvas_geometry(self):
+        display = Gdk.Display.get_default()
+        monitors = display.get_monitors()
+        
+        self.monitors_data = []
+        
+        if monitors.get_n_items() == 0:
+            self.canvas_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
+            self.main_monitor_geo = self.canvas_geo
+            return
+            
+        min_x, min_y = float('inf'), float('inf')
+        max_x, max_y = float('-inf'), float('-inf')
+        
+        main_monitor = monitors.get_item(0)
+        
+        for i in range(monitors.get_n_items()):
+            monitor = monitors.get_item(i)
+            geo = monitor.get_geometry()
+            self.monitors_data.append(geo)
+            
+            if geo.x == 0 and geo.y == 0:
+                main_monitor = monitor
+                
+            min_x = min(min_x, geo.x)
+            min_y = min(min_y, geo.y)
+            max_x = max(max_x, geo.x + geo.width)
+            max_y = max(max_y, geo.y + geo.height)
+            
+        self.canvas_geo = {
+            "x": int(min_x),
+            "y": int(min_y),
+            "width": int(max_x - min_x),
+            "height": int(max_y - min_y)
+        }
+        
+        m_geo = main_monitor.get_geometry()
+        self.main_monitor_geo = {
+            "x": int(m_geo.x),
+            "y": int(m_geo.y),
+            "width": int(m_geo.width),
+            "height": int(m_geo.height)
+        }
+
+    def draw_preview_box(self, drawing_area, cr, width, height):
+        cr.set_source_rgb(0.12, 0.12, 0.12)
+        cr.paint()
+
+        canvas_w = self.canvas_geo["width"]
+        canvas_h = self.canvas_geo["height"]
+
+        if canvas_w == 0 or canvas_h == 0:
+            return
+
+        scale = min((width - 20) / canvas_w, (height - 20) / canvas_h)
+        offset_x = (width - (canvas_w * scale)) / 2
+        offset_y = (height - (canvas_h * scale)) / 2
+
+        # 1. Monitore zeichnen
+        for m in self.monitors_data:
+            mx = offset_x + (m.x - self.canvas_geo["x"]) * scale
+            my = offset_y + (m.y - self.canvas_geo["y"]) * scale
+            mw = m.width * scale
+            mh = m.height * scale
+
+            cr.set_source_rgb(0.25, 0.25, 0.25)
+            cr.rectangle(mx, my, mw, mh)
+            cr.fill()
+
+            cr.set_source_rgb(0.4, 0.4, 0.4)
+            cr.set_line_width(1.5)
+            cr.rectangle(mx, my, mw, mh)
+            cr.stroke()
+
+        # 2. Glava Box zeichnen
+        gw = int(self.spin_width.get_value())
+        gh = int(self.spin_height.get_value())
+        gx = int(self.spin_x.get_value())
+        gy = int(self.spin_y.get_value())
+
+        bx = offset_x + (gx - self.canvas_geo["x"]) * scale
+        by = offset_y + (gy - self.canvas_geo["y"]) * scale
+        bw = gw * scale
+        bh = gh * scale
+
+        if bw > 0 and bh > 0:
+            cr.set_source_rgba(0.1, 0.45, 0.85, 0.55)
+            cr.rectangle(bx, by, bw, bh)
+            cr.fill()
+
+            cr.set_source_rgb(0.2, 0.6, 1.0)
+            cr.set_line_width(1.5)
+            cr.rectangle(bx, by, bw, bh)
+            cr.stroke()
+
+    # ─────────────────────────────────────────────
+    #  Restliche Funktionen
+    # ─────────────────────────────────────────────
+    def on_geometry_changed(self, *args):
+        self.preview_area.queue_draw()
 
     def load_config(self):
-        """Liest rc.glsl und befüllt die UI mit den aktuellen Werten."""
         if not os.path.exists(RC_FILE):
             return
 
         with open(RC_FILE, "r") as f:
             lines = f.readlines()
 
-        current_vis = "radial"   # Fallback für Modul-Datei
+        current_vis = "radial"
 
         for line in lines:
             s = line.strip()
@@ -257,27 +439,30 @@ class GlavaConfigurator(Adw.Application):
                     if current_vis in vis_types:
                         self.vis_combo.set_selected(vis_types.index(current_vis))
 
-        # Farbe + Outline aus der Modul-Datei lesen
         mod_file = os.path.join(CONFIG_DIR, f"{current_vis}.glsl")
         if os.path.exists(mod_file):
             with open(mod_file, "r") as f:
                 for line in f:
                     s = line.strip()
                     if s.startswith("#define COLOR") or s.startswith("#define BAR_COLOR"):
-                        hex_val = s.split()[-1].strip()
-                        rgba = self._hex_to_rgba(hex_val)
+                        raw_val = s.split()[-1].strip()
+                        rgba = self._hex_to_rgba(raw_val)
                         if rgba:
                             self.color_btn.set_rgba(rgba)
                     elif s.startswith("#define OUTLINE"):
-                        hex_val = s.split()[-1].strip()
+                        raw_val = s.split()[-1].strip()
+                        if "/*" in raw_val: raw_val = raw_val.split("/*")[0].strip()
+                        if "//" in raw_val: raw_val = raw_val.split("//")[0].strip()
                         self.outline_switch.set_active(
-                            not hex_val.endswith("00") and hex_val != "#00000000"
+                            not raw_val.endswith("00") and raw_val != "#00000000"
                         )
 
         self.preview_area.queue_draw()
 
     def _hex_to_rgba(self, hex_str):
-        """Konvertiert #rrggbbaa oder #rrggbb zu Gdk.RGBA."""
+        if "/*" in hex_str: hex_str = hex_str.split("/*")[0].strip()
+        if "//" in hex_str: hex_str = hex_str.split("//")[0].strip()
+        
         hex_str = hex_str.lstrip("#")
         try:
             if len(hex_str) == 8:
@@ -292,86 +477,6 @@ class GlavaConfigurator(Adw.Application):
             return rgba
         except ValueError:
             return None
-
-    # ─────────────────────────────────────────────
-    #  Vorhandene Methoden (unverändert)
-    # ─────────────────────────────────────────────
-
-    def load_canvas_geometry(self):
-        display = Gdk.Display.get_default()
-        monitors = display.get_monitors()
-        
-        if monitors.get_n_items() == 0:
-            self.canvas_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
-            return
-            
-        min_x, min_y = float('inf'), float('inf')
-        max_x, max_y = float('-inf'), float('-inf')
-        
-        for i in range(monitors.get_n_items()):
-            monitor = monitors.get_item(i)
-            geo = monitor.get_geometry()
-            min_x = min(min_x, geo.x)
-            min_y = min(min_y, geo.y)
-            max_x = max(max_x, geo.x + geo.width)
-            max_y = max(max_y, geo.y + geo.height)
-            
-        self.canvas_geo = {
-            "x": int(min_x),
-            "y": int(min_y),
-            "width": int(max_x - min_x),
-            "height": int(max_y - min_y)
-        }
-
-    def draw_preview_box(self, drawing_area, cr, width, height):
-        cr.set_source_rgb(0.18, 0.18, 0.18)
-        cr.rectangle(10, 10, width - 20, height - 20)
-        cr.fill()
-
-        cr.set_source_rgb(0.35, 0.35, 0.35)
-        cr.set_line_width(2)
-        cr.rectangle(10, 10, width - 20, height - 20)
-        cr.stroke()
-
-        mon_w = self.canvas_geo["width"]
-        mon_h = self.canvas_geo["height"]
-
-        if mon_w == 0 or mon_h == 0:
-            return
-
-        scale_x = (width - 20) / mon_w
-        scale_y = (height - 20) / mon_h
-
-        gw = int(self.spin_width.get_value())
-        gh = int(self.spin_height.get_value())
-        gx = int(self.spin_x.get_value())
-        gy = int(self.spin_y.get_value())
-
-        rel_x = gx - self.canvas_geo["x"]
-        rel_y = gy - self.canvas_geo["y"]
-
-        box_x = 10 + (rel_x * scale_x)
-        box_y = 10 + (rel_y * scale_y)
-        box_w = gw * scale_x
-        box_h = gh * scale_y
-
-        box_x = max(10, min(box_x, width - 10))
-        box_y = max(10, min(box_y, height - 10))
-        box_w = min(box_w, width - 10 - box_x)
-        box_h = min(box_h, height - 10 - box_y)
-
-        if box_w > 0 and box_h > 0:
-            cr.set_source_rgba(0.1, 0.45, 0.85, 0.55)
-            cr.rectangle(box_x, box_y, box_w, box_h)
-            cr.fill()
-
-            cr.set_source_rgb(0.2, 0.6, 1.0)
-            cr.set_line_width(1.5)
-            cr.rectangle(box_x, box_y, box_w, box_h)
-            cr.stroke()
-
-    def on_geometry_changed(self, *args):
-        self.preview_area.queue_draw()
 
     def on_autostart_toggled(self, switch, gparam):
         os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
@@ -391,11 +496,10 @@ class GlavaConfigurator(Adw.Application):
     def on_center_clicked(self, btn):
         w = int(self.spin_width.get_value())
         h = int(self.spin_height.get_value())
-        x = self.canvas_geo["x"] + (self.canvas_geo["width"] // 2) - (w // 2)
-        y = self.canvas_geo["y"] + (self.canvas_geo["height"] // 2) - (h // 2)
+        x = self.main_monitor_geo["x"] + (self.main_monitor_geo["width"] // 2) - (w // 2)
+        y = self.main_monitor_geo["y"] + (self.main_monitor_geo["height"] // 2) - (h // 2)
         self.spin_x.set_value(x)
         self.spin_y.set_value(y)
-        self.preview_area.queue_draw()
 
     def on_reset_config_clicked(self, btn):
         self.ensure_config_exists(force=True)
@@ -408,18 +512,16 @@ class GlavaConfigurator(Adw.Application):
         self.background_switch.set_active(True)
         self.mode_combo.set_selected(0)
         self.vis_combo.set_selected(0)
-        self.preview_area.queue_draw()
+        self.load_config()
         print("Gesamte Konfiguration zurückgesetzt!")
 
     def on_reset_size_clicked(self, btn):
         self.spin_width.set_value(600)
         self.spin_height.set_value(600)
-        self.preview_area.queue_draw()
 
     def on_reset_pos_clicked(self, btn):
         self.spin_x.set_value(0)
         self.spin_y.set_value(0)
-        self.preview_area.queue_draw()
 
     def on_toggle_glava(self, btn):
         if btn.get_active():
@@ -543,7 +645,6 @@ class GlavaConfigurator(Adw.Application):
 
             with open(mod_file, "w") as f:
                 f.writelines(new_mod_lines)
-
 
 if __name__ == '__main__':
     app = GlavaConfigurator()
