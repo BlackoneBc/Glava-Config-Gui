@@ -1,0 +1,469 @@
+#!/usr/bin/env python3
+import gi
+import os
+import subprocess
+import shutil
+
+# GTK4 und Libadwaita initialisieren
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk
+
+if os.path.exists('/.flatpak-info'):
+    USER_HOME = os.path.expanduser("~")
+    CONFIG_DIR = os.path.join(USER_HOME, ".config/glava")
+    AUTOSTART_FILE = os.path.join(USER_HOME, ".config/autostart/glava.desktop")
+else:
+    CONFIG_DIR = os.path.expanduser("~/.config/glava")
+    AUTOSTART_FILE = os.path.expanduser("~/.config/autostart/glava.desktop")
+
+RC_FILE = os.path.join(CONFIG_DIR, "rc.glsl")
+
+class GlavaConfigurator(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id='com.blackonebc.GlavaControlCenter')
+        self.glava_process = None
+        self.ensure_config_exists()
+        self.canvas_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
+
+    def ensure_config_exists(self, force=False):
+        if force and os.path.exists(CONFIG_DIR):
+            print("Setze Glava Konfigurationsverzeichnis zurück...")
+            shutil.rmtree(CONFIG_DIR)
+        
+        if not os.path.exists(RC_FILE):
+            print("Glava Konfiguration wird generiert...")
+            if os.path.exists('/.flatpak-info'):
+                subprocess.run(["flatpak-spawn", "--host", "glava", "--copy-config"], check=False)
+            else:
+                subprocess.run(["glava", "--copy-config"], check=False)
+
+    def do_activate(self):
+        # Darkmode immer erzwingen
+        style_manager = Adw.StyleManager.get_default()
+        style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+
+        window = Adw.ApplicationWindow(application=self)
+        window.set_title("Glava Control Center")
+        window.set_default_size(620, 850)
+
+        # Desktop-Größe für Vorschau berechnen
+        self.load_canvas_geometry()
+
+        # Header Bar
+        header = Adw.HeaderBar()
+        
+        self.toggle_btn = Gtk.ToggleButton(label="Glava Starten")
+        self.toggle_btn.connect("toggled", self.on_toggle_glava)
+        header.pack_start(self.toggle_btn)
+
+        apply_btn = Gtk.Button(label="Anwenden")
+        apply_btn.add_css_class("suggested-action")
+        apply_btn.connect("clicked", self.on_apply_clicked)
+        header.pack_end(apply_btn)
+
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_vexpand(True)
+        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        main_box.set_margin_top(24)
+        main_box.set_margin_bottom(24)
+        main_box.set_margin_start(32)
+        main_box.set_margin_end(32)
+
+        # === GRUPPE 1: ALLGEMEIN ===
+        group_general = Adw.PreferencesGroup(title="Allgemein")
+        main_box.append(group_general)
+
+        self.autostart_switch = Gtk.Switch()
+        self.autostart_switch.set_active(os.path.exists(AUTOSTART_FILE))
+        self.autostart_switch.set_valign(Gtk.Align.CENTER)
+        self.autostart_switch.connect("notify::active", self.on_autostart_toggled)
+        row_autostart = Adw.ActionRow(title="Autostart beim Login")
+        row_autostart.add_suffix(self.autostart_switch)
+        group_general.add(row_autostart)
+
+        self.clickthrough_switch = Gtk.Switch()
+        self.clickthrough_switch.set_active(True)
+        self.clickthrough_switch.set_valign(Gtk.Align.CENTER)
+        row_clickthrough = Adw.ActionRow(title="Durchklickbar (Mausklicks ignorieren)")
+        row_clickthrough.add_suffix(self.clickthrough_switch)
+        group_general.add(row_clickthrough)
+
+        self.background_switch = Gtk.Switch()
+        self.background_switch.set_active(True)
+        self.background_switch.set_valign(Gtk.Align.CENTER)
+        row_background = Adw.ActionRow(title="Im Hintergrund halten (Hinter Fenstern)")
+        row_background.add_suffix(self.background_switch)
+        group_general.add(row_background)
+
+        window_modes = Gtk.StringList.new(["desktop", "normal", "!"])
+        self.mode_combo = Adw.ComboRow(title="Fenster Desktop-Modus", model=window_modes)
+        group_general.add(self.mode_combo)
+
+        # === GRUPPE 2: GEOMETRIE & TYP ===
+        group_geo = Adw.PreferencesGroup(title="Visualizer & Position")
+        main_box.append(group_geo)
+
+        vis_types = Gtk.StringList.new(["radial", "graph", "wave", "circle", "bars"])
+        self.vis_combo = Adw.ComboRow(title="Visualizer Typ", model=vis_types)
+        group_geo.add(self.vis_combo)
+
+        # SpinButtons mit set_valign(Gtk.Align.CENTER), um Strecken zu verhindern
+        self.spin_width = Gtk.SpinButton.new_with_range(100, 5000, 10)
+        self.spin_width.set_value(600)
+        self.spin_width.set_valign(Gtk.Align.CENTER)
+        self.spin_width.connect("value-changed", self.on_geometry_changed)
+        row_width = Adw.ActionRow(title="Breite (px)")
+        row_width.add_suffix(self.spin_width)
+        group_geo.add(row_width)
+
+        self.spin_height = Gtk.SpinButton.new_with_range(100, 5000, 10)
+        self.spin_height.set_value(600)
+        self.spin_height.set_valign(Gtk.Align.CENTER)
+        self.spin_height.connect("value-changed", self.on_geometry_changed)
+        row_height = Adw.ActionRow(title="Höhe (px)")
+        row_height.add_suffix(self.spin_height)
+        group_geo.add(row_height)
+
+        # Range bis -10000 erweitert, falls Monitore links vom Hauptmonitor stehen
+        self.spin_x = Gtk.SpinButton.new_with_range(-10000, 10000, 10)
+        self.spin_x.set_valign(Gtk.Align.CENTER)
+        self.spin_x.connect("value-changed", self.on_geometry_changed)
+        row_x = Adw.ActionRow(title="X Position (Links/Rechts)")
+        row_x.add_suffix(self.spin_x)
+        group_geo.add(row_x)
+
+        self.spin_y = Gtk.SpinButton.new_with_range(-10000, 10000, 10)
+        self.spin_y.set_valign(Gtk.Align.CENTER)
+        self.spin_y.connect("value-changed", self.on_geometry_changed)
+        row_y = Adw.ActionRow(title="Y Position (Oben/Unten)")
+        row_y.add_suffix(self.spin_y)
+        group_geo.add(row_y)
+
+        center_btn = Gtk.Button(label="In der Mitte platzieren")
+        center_btn.set_valign(Gtk.Align.CENTER) # Verhindert, dass der Button riesig wird
+        center_btn.connect("clicked", self.on_center_clicked)
+        row_center = Adw.ActionRow(title="Ausrichtung")
+        row_center.add_suffix(center_btn)
+        group_geo.add(row_center)
+
+        # === GRUPPE 3: FARBEN & OUTLINES ===
+        group_color = Adw.PreferencesGroup(title="Farben & Effekte")
+        main_box.append(group_color)
+
+        self.color_dialog = Gtk.ColorDialog()
+        self.color_btn = Gtk.ColorDialogButton(dialog=self.color_dialog)
+        self.color_btn.set_valign(Gtk.Align.CENTER)
+        row_color = Adw.ActionRow(title="Hauptfarbe & Deckkraft")
+        row_color.add_suffix(self.color_btn)
+        group_color.add(row_color)
+
+        self.outline_switch = Gtk.Switch()
+        self.outline_switch.set_active(True)
+        self.outline_switch.set_valign(Gtk.Align.CENTER)
+        row_outline = Adw.ActionRow(title="Outlines (Ränder hervorheben)")
+        row_outline.add_suffix(self.outline_switch)
+        group_color.add(row_outline)
+
+        # === GRUPPE 4: LIVE VORSCHAU (GESAMTER DESKTOP) ===
+        group_preview = Adw.PreferencesGroup(title="Leinwand Vorschau")
+        main_box.append(group_preview)
+        
+        self.preview_area = Gtk.DrawingArea()
+        self.preview_area.set_content_width(220)
+        self.preview_area.set_content_height(130)
+        self.preview_area.set_draw_func(self.draw_preview_box)
+        
+        row_preview = Adw.ActionRow(title="Vorschau (Gesamter Desktop)")
+        row_preview.add_suffix(self.preview_area)
+        group_preview.add(row_preview)
+
+        # === GRUPPE 5: RESET BUTTONS ===
+        group_resets = Adw.PreferencesGroup()
+        main_box.append(group_resets)
+
+        reset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        reset_box.set_homogeneous(True)
+        reset_box.set_valign(Gtk.Align.CENTER) 
+
+        btn_reset_config = Gtk.Button(label="Config zurücksetzen")
+        btn_reset_config.add_css_class("destructive-action")
+        btn_reset_config.connect("clicked", self.on_reset_config_clicked)
+
+        btn_reset_size = Gtk.Button(label="Größe zurücksetzen")
+        btn_reset_size.connect("clicked", self.on_reset_size_clicked)
+
+        btn_reset_pos = Gtk.Button(label="Position zurücksetzen")
+        btn_reset_pos.connect("clicked", self.on_reset_pos_clicked)
+
+        reset_box.append(btn_reset_config)
+        reset_box.append(btn_reset_size)
+        reset_box.append(btn_reset_pos)
+
+        group_resets.add(reset_box)
+
+        scrolled_window.set_child(main_box)
+
+        toolbar_view = Adw.ToolbarView()
+        toolbar_view.add_top_bar(header)
+        toolbar_view.set_content(scrolled_window)
+        
+        window.set_content(toolbar_view)
+        window.present()
+
+    def load_canvas_geometry(self):
+        """Berechnet die Bounding-Box (die Gesamtgröße) über alle Monitore hinweg."""
+        display = Gdk.Display.get_default()
+        monitors = display.get_monitors()
+        
+        if monitors.get_n_items() == 0:
+            self.canvas_geo = {"x": 0, "y": 0, "width": 1920, "height": 1080}
+            return
+            
+        min_x, min_y = float('inf'), float('inf')
+        max_x, max_y = float('-inf'), float('-inf')
+        
+        for i in range(monitors.get_n_items()):
+            monitor = monitors.get_item(i)
+            geo = monitor.get_geometry()
+            min_x = min(min_x, geo.x)
+            min_y = min(min_y, geo.y)
+            max_x = max(max_x, geo.x + geo.width)
+            max_y = max(max_y, geo.y + geo.height)
+            
+        self.canvas_geo = {
+            "x": int(min_x),
+            "y": int(min_y),
+            "width": int(max_x - min_x),
+            "height": int(max_y - min_y)
+        }
+
+    def draw_preview_box(self, drawing_area, cr, width, height):
+        cr.set_source_rgb(0.18, 0.18, 0.18) 
+        cr.rectangle(10, 10, width - 20, height - 20)
+        cr.fill()
+
+        cr.set_source_rgb(0.35, 0.35, 0.35)
+        cr.set_line_width(2)
+        cr.rectangle(10, 10, width - 20, height - 20)
+        cr.stroke()
+
+        mon_x = self.canvas_geo["x"]
+        mon_y = self.canvas_geo["y"]
+        mon_w = self.canvas_geo["width"]
+        mon_h = self.canvas_geo["height"]
+
+        if mon_w == 0 or mon_h == 0:
+            return
+
+        scale_x = (width - 20) / mon_w
+        scale_y = (height - 20) / mon_h
+
+        gw = int(self.spin_width.get_value())
+        gh = int(self.spin_height.get_value())
+        gx = int(self.spin_x.get_value())
+        gy = int(self.spin_y.get_value())
+
+        rel_x = gx - mon_x
+        rel_y = gy - mon_y
+
+        box_x = 10 + (rel_x * scale_x)
+        box_y = 10 + (rel_y * scale_y)
+        box_w = gw * scale_x
+        box_h = gh * scale_y
+
+        box_x = max(10, min(box_x, width - 10))
+        box_y = max(10, min(box_y, height - 10))
+        box_w = min(box_w, width - 10 - box_x)
+        box_h = min(box_h, height - 10 - box_y)
+
+        if box_w > 0 and box_h > 0:
+            cr.set_source_rgba(0.1, 0.45, 0.85, 0.55) 
+            cr.rectangle(box_x, box_y, box_w, box_h)
+            cr.fill()
+
+            cr.set_source_rgb(0.2, 0.6, 1.0) 
+            cr.set_line_width(1.5)
+            cr.rectangle(box_x, box_y, box_w, box_h)
+            cr.stroke()
+
+    def on_geometry_changed(self, *args):
+        self.preview_area.queue_draw()
+
+    def on_autostart_toggled(self, switch, gparam):
+        os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
+        if switch.get_active():
+            if os.path.exists('/.flatpak-info'):
+                exec_cmd = "flatpak run com.blackonebc.GlavaControlCenter"
+            else:
+                exec_cmd = "glava-config-gui"
+                
+            desktop_entry = f"[Desktop Entry]\nType=Application\nExec={exec_cmd}\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\nName=Glava\n"
+            with open(AUTOSTART_FILE, "w") as f:
+                f.write(desktop_entry)
+        else:
+            if os.path.exists(AUTOSTART_FILE):
+                os.remove(AUTOSTART_FILE)
+
+    def on_center_clicked(self, btn):
+        # Zentriert Glava auf der gesamten Desktop-Leinwand
+        w = int(self.spin_width.get_value())
+        h = int(self.spin_height.get_value())
+        
+        x = self.canvas_geo["x"] + (self.canvas_geo["width"] // 2) - (w // 2)
+        y = self.canvas_geo["y"] + (self.canvas_geo["height"] // 2) - (h // 2)
+        
+        self.spin_x.set_value(x)
+        self.spin_y.set_value(y)
+        self.preview_area.queue_draw()
+
+    def on_reset_config_clicked(self, btn):
+        self.ensure_config_exists(force=True)
+        self.spin_width.set_value(600)
+        self.spin_height.set_value(600)
+        self.spin_x.set_value(0)
+        self.spin_y.set_value(0)
+        self.outline_switch.set_active(True)
+        self.clickthrough_switch.set_active(True)
+        self.background_switch.set_active(True)
+        self.mode_combo.set_selected(0)
+        self.vis_combo.set_selected(0)
+        self.preview_area.queue_draw()
+        print("Gesamte Konfiguration zurückgesetzt!")
+
+    def on_reset_size_clicked(self, btn):
+        self.spin_width.set_value(600)
+        self.spin_height.set_value(600)
+        self.preview_area.queue_draw()
+
+    def on_reset_pos_clicked(self, btn):
+        self.spin_x.set_value(0)
+        self.spin_y.set_value(0)
+        self.preview_area.queue_draw()
+
+    def on_toggle_glava(self, btn):
+        if btn.get_active():
+            btn.set_label("Glava Stoppen")
+            if os.path.exists('/.flatpak-info'):
+                self.glava_process = subprocess.Popen(["flatpak-spawn", "--host", "glava"])
+            else:
+                self.glava_process = subprocess.Popen(["glava"])
+        else:
+            btn.set_label("Glava Starten")
+            if self.glava_process:
+                self.glava_process.terminate()
+                self.glava_process = None
+            
+            if os.path.exists('/.flatpak-info'):
+                subprocess.run(["flatpak-spawn", "--host", "killall", "-q", "glava"])
+            else:
+                subprocess.run(["killall", "-q", "glava"])
+
+    def on_apply_clicked(self, btn):
+        self.write_config()
+        if self.toggle_btn.get_active():
+            if os.path.exists('/.flatpak-info'):
+                subprocess.run(["flatpak-spawn", "--host", "killall", "-q", "glava"])
+                self.glava_process = subprocess.Popen(["flatpak-spawn", "--host", "glava"])
+            else:
+                subprocess.run(["killall", "-q", "glava"])
+                self.glava_process = subprocess.Popen(["glava"])
+        else:
+            self.toggle_btn.set_active(True)
+
+    def write_config(self):
+        if not os.path.exists(RC_FILE):
+            return
+
+        w = int(self.spin_width.get_value())
+        h = int(self.spin_height.get_value())
+        x = int(self.spin_x.get_value())
+        y = int(self.spin_y.get_value())
+        
+        modes = ["desktop", "normal", "!"]
+        mode = modes[self.mode_combo.get_selected()]
+        
+        vis_types = ["radial", "graph", "wave", "circle", "bars"]
+        vis = vis_types[self.vis_combo.get_selected()]
+
+        clickthrough = "true" if self.clickthrough_switch.get_active() else "false"
+        keep_below = self.background_switch.get_active()
+
+        with open(RC_FILE, "r") as f:
+            lines = f.readlines()
+
+        new_lines = []
+        for line in lines:
+            sline = line.strip()
+            if (sline.startswith("#request setgeometry") or 
+                sline.startswith("#request setxwintype") or 
+                sline.startswith("#request setclickthrough") or 
+                sline.startswith("#request addxwinstate") or 
+                sline.startswith("#request mod") or
+                sline.startswith("// #request") or
+                sline.startswith("/* #request")):
+                continue
+            new_lines.append(line)
+
+        new_lines.append(f"\n#request setgeometry {x} {y} {w} {h}\n")
+        new_lines.append(f'#request setxwintype "{mode}"\n')
+        new_lines.append(f'#request setclickthrough {clickthrough}\n')
+        
+        if keep_below:
+            new_lines.append('#request addxwinstate "below"\n')
+            new_lines.append('#request addxwinstate "pinned"\n')
+            new_lines.append('#request addxwinstate "skip_taskbar"\n')
+            new_lines.append('#request addxwinstate "skip_pager"\n')
+            
+        new_lines.append(f"#request mod {vis}\n")
+
+        with open(RC_FILE, "w") as f:
+            f.writelines(new_lines)
+
+        rgba = self.color_btn.get_rgba()
+        hex_color = f"#{int(rgba.red*255):02x}{int(rgba.green*255):02x}{int(rgba.blue*255):02x}{int(rgba.alpha*255):02x}"
+        outline_color = hex_color if self.outline_switch.get_active() else "#00000000"
+
+        mod_file = os.path.join(CONFIG_DIR, f"{vis}.glsl")
+        
+        if os.path.exists(mod_file):
+            with open(mod_file, "r") as f:
+                mod_lines = f.readlines()
+            
+            new_mod_lines = []
+            color_keys = ["#define COLOR", "#define BG_COLOR", "#define FG_COLOR", "#define BAR_COLOR"]
+            found_keys = set()
+            outline_replaced = False
+
+            for line in mod_lines:
+                sline = line.strip()
+                replaced = False
+                
+                for key in color_keys:
+                    if sline.startswith(key):
+                        new_mod_lines.append(f'{key} {hex_color}\n')
+                        found_keys.add(key)
+                        replaced = True
+                        break
+                
+                if not replaced and sline.startswith("#define OUTLINE"):
+                    new_mod_lines.append(f'#define OUTLINE {outline_color}\n')
+                    outline_replaced = True
+                    replaced = True
+
+                if not replaced:
+                    new_mod_lines.append(line)
+            
+            if "#define COLOR" not in found_keys:
+                new_mod_lines.append(f'\n#define COLOR {hex_color}\n')
+            if not outline_replaced:
+                new_mod_lines.append(f'#define OUTLINE {outline_color}\n')
+
+            with open(mod_file, "w") as f:
+                f.writelines(new_mod_lines)
+
+if __name__ == '__main__':
+    app = GlavaConfigurator()
+    app.run(None)
