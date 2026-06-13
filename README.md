@@ -8,7 +8,6 @@ A powerful GTK4/Libadwaita GUI application to configure the **glava** audio visu
 - 🎵 **Multiple Visualizer Types** - radial, graph, wave, circle, bars
 - 🎯 **Precise Positioning** - Set exact pixel coordinates for your visualizer
 - 🌈 **Color Customization** - Choose colors and transparency for visualizer effects
-- 💾 **Auto-save Configuration** - Changes are automatically written to glava's config
 - 🚀 **Autostart Support** - Enable glava to start automatically at login
 - 🪟 **Multi-Monitor Support** - Automatically detects all connected monitors
 
