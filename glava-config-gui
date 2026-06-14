@@ -51,7 +51,7 @@ class GlavaConfigurator(Adw.Application):
         style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
 
         window = Adw.ApplicationWindow(application=self)
-        window.set_title("Glava Control Center")
+        window.set_title("Glava Konfigurator")
         window.set_default_size(650, 950)
 
         self.load_canvas_geometry()
@@ -151,11 +151,11 @@ class GlavaConfigurator(Adw.Application):
         row_y.add_suffix(self.spin_y)
         group_geo.add(row_y)
 
-        self.center_menu_btn = Gtk.MenuButton(label="Monitor auswählen...")
+        self.center_menu_btn = Gtk.MenuButton(label="Monitor auswählen ...")
         self.center_menu_btn.set_valign(Gtk.Align.CENTER)
         self.build_center_popover()
         
-        row_center = Adw.ActionRow(title="In der Mitte platzieren auf:")
+        row_center = Adw.ActionRow(title="Auf Monitor zentrieren:")
         row_center.add_suffix(self.center_menu_btn)
         group_geo.add(row_center)
 
@@ -189,7 +189,7 @@ class GlavaConfigurator(Adw.Application):
         reset_box.set_homogeneous(True)
         reset_box.set_valign(Gtk.Align.CENTER)
 
-        btn_reset_config = Gtk.Button(label="Config zurücksetzen")
+        btn_reset_config = Gtk.Button(label="Konfiguration zurücksetzen")
         btn_reset_config.add_css_class("destructive-action")
         btn_reset_config.set_valign(Gtk.Align.CENTER)
         btn_reset_config.connect("clicked", self.on_reset_config_clicked)
