@@ -32,8 +32,7 @@ class GlavaConfigurator(Adw.Application):
         self.is_dragging_box = False
 
         self.current_vis = "radial"
-        self.type_widgets = {}   # Widgets für den aktuellen Typ
-        self.type_rows = []       # Liste der aktuell hinzugefügten ActionRows
+        self.type_widgets = {}
 
     def ensure_config_exists(self, force=False):
         if force and os.path.exists(CONFIG_DIR):
@@ -78,7 +77,6 @@ class GlavaConfigurator(Adw.Application):
         main_box.set_margin_start(32)
         main_box.set_margin_end(32)
 
-        # === GRUPPE 1: ALLGEMEIN ===
         group_general = Adw.PreferencesGroup(title="Allgemein")
         main_box.append(group_general)
 
@@ -108,7 +106,6 @@ class GlavaConfigurator(Adw.Application):
         self.mode_combo = Adw.ComboRow(title="Fenster-Desktop-Modus", model=window_modes)
         group_general.add(self.mode_combo)
 
-        # === GRUPPE 2: VISUALIZER-TYP ===
         group_type = Adw.PreferencesGroup(title="Visualizer-Typ")
         main_box.append(group_type)
 
@@ -117,11 +114,10 @@ class GlavaConfigurator(Adw.Application):
         self.vis_combo.connect("notify::selected", self.on_vis_type_changed)
         group_type.add(self.vis_combo)
 
-        # === GRUPPE 3: TYP-SPEZIFISCHE EINSTELLUNGEN ===
         self.group_type_settings = Adw.PreferencesGroup(title="Einstellungen für diesen Typ")
         main_box.append(self.group_type_settings)
+        self.vis_type_group = group_type
 
-        # === GRUPPE 4: GEOMETRIE ===
         group_geo = Adw.PreferencesGroup(title="Position und Größe")
         main_box.append(group_geo)
 
@@ -163,7 +159,6 @@ class GlavaConfigurator(Adw.Application):
         row_center.add_suffix(self.center_menu_btn)
         group_geo.add(row_center)
 
-        # === GRUPPE 5: LIVE VORSCHAU ===
         group_preview = Adw.PreferencesGroup(title="Vorschau")
         main_box.append(group_preview)
         
@@ -187,7 +182,6 @@ class GlavaConfigurator(Adw.Application):
         preview_layout_box.append(self.preview_area)
         group_preview.add(preview_layout_box)
 
-        # === GRUPPE 6: RESET-BUTTONS ===
         group_resets = Adw.PreferencesGroup()
         main_box.append(group_resets)
 
@@ -225,9 +219,6 @@ class GlavaConfigurator(Adw.Application):
 
         self.load_config()
 
-    # ─────────────────────────────────────────────
-    #  Wechsel des Visualizer-Typs
-    # ─────────────────────────────────────────────
     def on_vis_type_changed(self, combo, param):
         vis_types = ["radial", "graph", "wave", "circle", "bars"]
         idx = combo.get_selected()
@@ -236,12 +227,12 @@ class GlavaConfigurator(Adw.Application):
             self.reload_type_settings()
 
     def reload_type_settings(self):
-        # Alte Widgets nur entfernen, wenn sie direktes Kind der Gruppe sind
-        for row in self.type_rows:
-            parent = row.get_parent()
-            if parent is self.group_type_settings:
-                self.group_type_settings.remove(row)
-        self.type_rows.clear()
+        main_box = self.group_type_settings.get_parent()
+        if main_box:
+            main_box.remove(self.group_type_settings)
+
+        self.group_type_settings = Adw.PreferencesGroup(title="Einstellungen für diesen Typ")
+        main_box.insert_child_after(self.group_type_settings, self.vis_type_group)
 
         self.type_widgets = {}
         filepath = os.path.join(CONFIG_DIR, f"{self.current_vis}.glsl")
@@ -283,11 +274,7 @@ class GlavaConfigurator(Adw.Application):
                 self.type_widgets[name] = None
 
             self.group_type_settings.add(row)
-            self.type_rows.append(row)
 
-    # ─────────────────────────────────────────────
-    #  GLSL-Defines parsen
-    # ─────────────────────────────────────────────
     def parse_glsl_defines(self, filepath):
         defines = []
         if not os.path.exists(filepath):
@@ -297,7 +284,6 @@ class GlavaConfigurator(Adw.Application):
                 sline = line.strip()
                 if not sline.startswith('#define'):
                     continue
-                # Kommentare entfernen
                 comment_pos = sline.find('//')
                 if comment_pos != -1:
                     sline = sline[:comment_pos].strip()
@@ -327,9 +313,6 @@ class GlavaConfigurator(Adw.Application):
     def _rgba_to_hex(self, rgba):
         return f"#{int(rgba.red*255):02x}{int(rgba.green*255):02x}{int(rgba.blue*255):02x}{int(rgba.alpha*255):02x}"
 
-    # ─────────────────────────────────────────────
-    #  Konfiguration laden / schreiben
-    # ─────────────────────────────────────────────
     def load_config(self):
         if not os.path.exists(RC_FILE):
             self.current_vis = "radial"
@@ -422,7 +405,6 @@ class GlavaConfigurator(Adw.Application):
         with open(RC_FILE, "w") as f:
             f.writelines(new_lines)
 
-        # Typ-spezifische Datei speichern
         filepath = os.path.join(CONFIG_DIR, f"{self.current_vis}.glsl")
         if os.path.exists(filepath):
             with open(filepath, 'r') as f:
@@ -454,7 +436,6 @@ class GlavaConfigurator(Adw.Application):
                             continue
                 new_mod_lines.append(line)
 
-            # Neue Defines anhängen, die nicht in der Datei standen
             for name, widget in self.type_widgets.items():
                 if name not in defines_written:
                     if isinstance(widget, Gtk.ColorDialogButton):
@@ -489,9 +470,6 @@ class GlavaConfigurator(Adw.Application):
         except ValueError:
             return None
 
-    # ─────────────────────────────────────────────
-    #  Monitor & Vorschau (unverändert)
-    # ─────────────────────────────────────────────
     def load_canvas_geometry(self):
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
@@ -628,9 +606,6 @@ class GlavaConfigurator(Adw.Application):
             cr.rectangle(bx, by, bw, bh)
             cr.stroke()
 
-    # ─────────────────────────────────────────────
-    #  Drag & Drop (unverändert)
-    # ─────────────────────────────────────────────
     def on_drag_begin(self, gesture, start_x, start_y):
         w = self.preview_area.get_width()
         h = self.preview_area.get_height()
@@ -702,9 +677,6 @@ class GlavaConfigurator(Adw.Application):
     def on_geometry_changed(self, *args):
         self.preview_area.queue_draw()
 
-    # ─────────────────────────────────────────────
-    #  Button-Events
-    # ─────────────────────────────────────────────
     def on_autostart_toggled(self, switch, gparam):
         os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
         if switch.get_active():
@@ -731,12 +703,6 @@ class GlavaConfigurator(Adw.Application):
         self.mode_combo.set_selected(0)
         self.vis_combo.set_selected(0)
         self.current_vis = "radial"
-        # Alte Reihen entfernen
-        for row in self.type_rows:
-            parent = row.get_parent()
-            if parent is self.group_type_settings:
-                self.group_type_settings.remove(row)
-        self.type_rows.clear()
         self.reload_type_settings()
         self.preview_area.queue_draw()
         print("Gesamte Konfiguration zurückgesetzt!")
