@@ -18,8 +18,28 @@ else:
 
 RC_FILE = os.path.join(CONFIG_DIR, "rc.glsl")
 
-vis_display = ["Radial", "Graph", "Welle", "Kreis", "Balken"]
 vis_ids = ["radial", "graph", "wave", "circle", "bars"]
+
+# Deutsche Beschreibungen für die häufigsten #define-Werte
+define_uebersetzung = {
+    "COLOR": "Farbe",
+    "BG_COLOR": "Hintergrundfarbe",
+    "FG_COLOR": "Vordergrundfarbe",
+    "BAR_COLOR": "Balkenfarbe",
+    "OUTLINE": "Umrandung",
+    "CENTER_OFFSET_X": "Mittenversatz X",
+    "CENTER_OFFSET_Y": "Mittenversatz Y",
+    "RADIUS": "Radius",
+    "BAR_WIDTH": "Balkenbreite",
+    "BAR_GAP": "Balkenabstand",
+    "SMOOTHING": "Glättung",
+    "AMPLITUDE": "Amplitude",
+    "FREQUENCY": "Frequenz",
+    "MIRROR": "Spiegeln",
+    "FILL": "Füllung",
+    "REVERSE": "Umkehren",
+    "DIRECTION": "Richtung",
+}
 
 class GlavaConfigurator(Adw.Application):
     def __init__(self):
@@ -105,15 +125,15 @@ class GlavaConfigurator(Adw.Application):
         self.mode_combo = Adw.ComboRow(title="Fenster-Desktop-Modus", model=window_modes)
         group_general.add(self.mode_combo)
 
-        # Visualizer-Typ
+        # Visualizer-Typ (originale Namen)
         group_type = Adw.PreferencesGroup(title="Visualizer-Typ")
         main_box.append(group_type)
 
-        self.vis_combo = Adw.ComboRow(title="Typ", model=Gtk.StringList.new(vis_display))
+        self.vis_combo = Adw.ComboRow(title="Typ", model=Gtk.StringList.new(vis_ids))
         self.vis_combo.connect("notify::selected", self.on_vis_type_changed)
         group_type.add(self.vis_combo)
 
-        # Einstellungen für diesen Typ
+        # Einstellungen für diesen Typ (wird dynamisch ausgetauscht)
         self.group_type_settings = Adw.PreferencesGroup(title="Einstellungen für diesen Typ")
         main_box.append(self.group_type_settings)
         self.vis_type_group = group_type
@@ -226,10 +246,12 @@ class GlavaConfigurator(Adw.Application):
             self.reload_type_settings()
 
     def reload_type_settings(self):
+        # Alte Einstellungsgruppe entfernen
         main_box = self.group_type_settings.get_parent()
         if main_box:
             main_box.remove(self.group_type_settings)
 
+        # Neue Gruppe anlegen und an die richtige Stelle setzen
         self.group_type_settings = Adw.PreferencesGroup(title="Einstellungen für diesen Typ")
         main_box.insert_child_after(self.group_type_settings, self.vis_type_group)
 
@@ -239,7 +261,9 @@ class GlavaConfigurator(Adw.Application):
         for d in defines:
             name = d['name']
             typ = d['type']
-            row = Adw.ActionRow(title=name)
+            # Deutschen Anzeigenamen wählen (falls vorhanden)
+            anzeige = define_uebersetzung.get(name, name.replace('_', ' ').title())
+            row = Adw.ActionRow(title=anzeige)
             if typ == 'color':
                 color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog())
                 rgba = self._hex_to_rgba(d['value'])
