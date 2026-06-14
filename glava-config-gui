@@ -36,6 +36,7 @@ class GlavaConfigurator(Adw.Application):
         # Visualizer-Tabs
         self.current_vis = "radial"
         self.type_pages = {}
+        self.type_containers = {}
         self.type_widgets = {}
 
     def ensure_config_exists(self, force=False):
@@ -112,7 +113,7 @@ class GlavaConfigurator(Adw.Application):
         group_general.add(self.mode_combo)
 
         # === GRUPPE 2: GEOMETRIE ===
-        group_geo = Adw.PreferencesGroup(title="Position & Größe")
+        group_geo = Adw.PreferencesGroup(title="Position und Größe")
         main_box.append(group_geo)
 
         self.spin_width = Gtk.SpinButton.new_with_range(100, 5000, 10)
@@ -158,11 +159,13 @@ class GlavaConfigurator(Adw.Application):
         self.tab_view = Adw.TabView()
         self.tab_view.connect("notify::selected-page", self.on_tab_changed)
         self.type_pages = {}
+        self.type_containers = {}
         for vis in ["radial", "graph", "wave", "circle", "bars"]:
-            placeholder = Gtk.Box()
-            page = self.tab_view.append(placeholder)
+            container = Gtk.Box()
+            page = self.tab_view.append(container)
             page.set_title(vis.capitalize())
             self.type_pages[vis] = page
+            self.type_containers[vis] = container
         group_vis.add(self.tab_view)
         main_box.append(group_vis)
 
@@ -311,7 +314,7 @@ class GlavaConfigurator(Adw.Application):
             self.preview_area.queue_draw()
 
     # ─────────────────────────────────────────────
-    #  Monitor-Erkennung & Dynamisches Zentrier-Menü
+    #  Monitor-Erkennung & Zentrier-Menü
     # ─────────────────────────────────────────────
     def load_canvas_geometry(self):
         display = Gdk.Display.get_default()
@@ -545,8 +548,13 @@ class GlavaConfigurator(Adw.Application):
                 
             group.add(row)
             
-        page = self.type_pages[vis]
-        page.set_child(group)
+        container = self.type_containers.get(vis)
+        if container:
+            # Alten Inhalt entfernen
+            old = container.get_first_child()
+            if old:
+                container.remove(old)
+            container.append(group)
 
     def load_all_type_configs(self):
         for vis in self.type_pages.keys():
@@ -702,6 +710,7 @@ class GlavaConfigurator(Adw.Application):
             f.writelines(new_lines)
 
     def _hex_to_rgba(self, hex_str):
+        """Konvertiert #rrggbbaa oder #rrggbb zu Gdk.RGBA."""
         if "/*" in hex_str: hex_str = hex_str.split("/*")[0].strip()
         if "//" in hex_str: hex_str = hex_str.split("//")[0].strip()
         hex_str = hex_str.lstrip("#")
