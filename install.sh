@@ -94,11 +94,31 @@ Type=Application
 Name=Glava Config GUI
 Comment=Configure the glava audio visualizer
 Exec=glava-config-gui
-Icon=preferences-system
-Categories=Audio;Utility;
+Icon=glava-config-gui
+Categories=AudioVideo;Audio;Settings;
 Terminal=false
 StartupNotify=true
 EOF
+    # Icon installieren (pamac zeigt "Starte"-Button nur mit gültigem Icon)
+    local icon_src=""
+    for candidate in \
+        /usr/share/icons/hicolor/48x48/apps/multimedia-volume-control.png \
+        /usr/share/icons/hicolor/48x48/apps/audio-x-generic.png \
+        /usr/share/icons/hicolor/scalable/apps/multimedia-volume-control.svg \
+        /usr/share/pixmaps/multimedia-volume-control.png; do
+        if [ -f "$candidate" ]; then
+            icon_src="$candidate"
+            break
+        fi
+    done
+
+    if [ -n "$icon_src" ]; then
+        local ext="${icon_src##*.}"
+        sudo mkdir -p /usr/share/icons/hicolor/48x48/apps/
+        sudo cp "$icon_src" "/usr/share/icons/hicolor/48x48/apps/glava-config-gui.$ext"
+        sudo gtk-update-icon-cache /usr/share/icons/hicolor/ 2>/dev/null || true
+    fi
+
     sudo update-desktop-database /usr/share/applications/ 2>/dev/null || true
     echo -e "${GREEN}✓ Desktop entry created${NC}"
 }
