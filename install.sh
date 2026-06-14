@@ -11,7 +11,6 @@ echo -e "${GREEN}║   Glava-Config-Gui Installer           ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
 echo ""
 
-# Detect distro
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
@@ -80,8 +79,8 @@ install_script() {
     echo -e "${YELLOW}Downloading glava-config-gui...${NC}"
     check_sudo
     sudo curl -sSL "https://raw.githubusercontent.com/BlackoneBc/Glava-Config-Gui/main/glava-config-gui" \
-        -o "/usr/local/bin/glava-config-gui"
-    sudo chmod +x "/usr/local/bin/glava-config-gui"
+        -o "/usr/bin/glava-config-gui"
+    sudo chmod +x "/usr/bin/glava-config-gui"
     echo -e "${GREEN}✓ Script installed${NC}"
 }
 
@@ -104,78 +103,55 @@ EOF
     echo -e "${GREEN}✓ Desktop entry created${NC}"
 }
 
-# === NEU: Pacman-Paket registrieren (nur Arch/Manjaro) ===
 register_pacman_package() {
     if ! command -v pacman &>/dev/null; then return 0; fi
 
     echo -e "${YELLOW}Registering package with pacman...${NC}"
 
     local tmpdir=$(mktemp -d)
-    local pkgdir="$tmpdir/pkg"
-    local pkgfile="$tmpdir/glava-config-gui-1.0.0-1-any.pkg.tar.zst"
+    cd "$tmpdir"
 
-    # Paketstruktur bauen
-    mkdir -p "$pkgdir/usr/bin"
-    mkdir -p "$pkgdir/usr/share/applications"
-    mkdir -p "$pkgdir/usr/share/licenses/glava-config-gui"
+    # PKGBUILD schreiben – makepkg baut das Paket korrekt
+    cat > "$tmpdir/PKGBUILD" << 'EOF'
+pkgname=glava-config-gui
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="GTK4/Libadwaita GUI to configure the glava audio visualizer"
+arch=('any')
+url="https://github.com/BlackoneBc/Glava-Config-Gui"
+license=('MIT')
+depends=('python' 'python-gobject' 'gtk4' 'libadwaita' 'psmisc' 'glava')
 
-    # Dateien
-    cp /usr/local/bin/glava-config-gui "$pkgdir/usr/bin/glava-config-gui"
-    chmod 755 "$pkgdir/usr/bin/glava-config-gui"
-    cp /usr/share/applications/glava-config-gui.desktop \
+package() {
+    install -Dm755 /usr/bin/glava-config-gui \
+        "$pkgdir/usr/bin/glava-config-gui"
+    install -Dm644 /usr/share/applications/glava-config-gui.desktop \
         "$pkgdir/usr/share/applications/glava-config-gui.desktop"
-    chmod 644 "$pkgdir/usr/share/applications/glava-config-gui.desktop"
-    echo "MIT" > "$pkgdir/usr/share/licenses/glava-config-gui/LICENSE"
-    chmod 644 "$pkgdir/usr/share/licenses/glava-config-gui/LICENSE"
-
-    # Größe berechnen
-    local pkgsize
-    pkgsize=$(du -sb "$pkgdir" 2>/dev/null | cut -f1 || echo "10240")
-
-    # .PKGINFO schreiben
-    cat > "$pkgdir/.PKGINFO" << EOF
-pkgname = glava-config-gui
-pkgver = 1.0.0-1
-pkgdesc = GTK4/Libadwaita GUI to configure the glava audio visualizer
-url = https://github.com/BlackoneBc/Glava-Config-Gui
-builddate = $(date +%s)
-packager = BlackoneBc <jlm2@freenet.de>
-size = $pkgsize
-arch = any
-license = MIT
-depend = python
-depend = python-gobject
-depend = gtk4
-depend = libadwaita
-depend = psmisc
-depend = glava
+    install -Dm644 /dev/stdin \
+        "$pkgdir/usr/share/licenses/glava-config-gui/LICENSE" << 'LICENSE'
+MIT License - BlackoneBc - https://github.com/BlackoneBc/Glava-Config-Gui
+LICENSE
+}
 EOF
 
-    # .MTREE erzeugen (pacman verifiziert damit Dateien)
-    cd "$pkgdir"
-    bsdtar -czf "$tmpdir/.MTREE" \
-        --format=mtree \
-        --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
-        $(find . -not -name '.PKGINFO' -not -name '.MTREE' | sort) 2>/dev/null || true
-
-    if [ -f "$tmpdir/.MTREE" ]; then
-        cp "$tmpdir/.MTREE" "$pkgdir/.MTREE"
+    # makepkg als normaler User ausführen (darf nicht root sein)
+    if [ "$EUID" -eq 0 ]; then
+        # Als root: temporären User nutzen oder direkt ins DB eintragen
+        echo -e "${YELLOW}Skipping pacman registration (running as root)${NC}"
+        rm -rf "$tmpdir"
+        return 0
     fi
 
-    # Paket mit zstd bauen (korrekte Methode für Arch)
-    cd "$pkgdir"
-    if command -v zstd &>/dev/null; then
-        bsdtar --no-fflags -czf - \
-            --format=pax \
-            --exclude='.MTREE' \
-            .PKGINFO .MTREE usr 2>/dev/null | \
-        zstd -q -o "$pkgfile" 2>/dev/null || \
-        bsdtar -czf - .PKGINFO usr 2>/dev/null | zstd -q -o "$pkgfile"
-    else
-        # Fallback: tar.gz statt zst
-        pkgfile="$tmpdir/glava-config-gui-1.0.0-1-any.pkg.tar.gz"
-        bsdtar -czf "$pkgfile" .PKGINFO usr 2>/dev/null || \
-        tar -czf "$pkgfile" .PKGINFO usr
+    cd "$tmpdir"
+    makepkg -sf --noconfirm 2>/dev/null
+
+    local pkgfile
+    pkgfile=$(ls "$tmpdir"/*.pkg.tar.* 2>/dev/null | head -1)
+
+    if [ -z "$pkgfile" ]; then
+        echo -e "${RED}Package build failed, skipping registration${NC}"
+        rm -rf "$tmpdir"
+        return 0
     fi
 
     check_sudo
