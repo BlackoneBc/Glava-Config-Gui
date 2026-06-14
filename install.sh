@@ -111,28 +111,36 @@ register_pacman_package() {
     echo -e "${YELLOW}Registering package with pacman...${NC}"
 
     local tmpdir=$(mktemp -d)
+    local pkgdir="$tmpdir/pkg"
     local pkgfile="$tmpdir/glava-config-gui-1.0.0-1-any.pkg.tar.zst"
 
     # Paketstruktur bauen
-    mkdir -p "$tmpdir/pkg/usr/bin"
-    mkdir -p "$tmpdir/pkg/usr/share/applications"
-    mkdir -p "$tmpdir/pkg/usr/share/licenses/glava-config-gui"
+    mkdir -p "$pkgdir/usr/bin"
+    mkdir -p "$pkgdir/usr/share/applications"
+    mkdir -p "$pkgdir/usr/share/licenses/glava-config-gui"
 
-    # Dateien die pacman "gehören"
-    cp /usr/local/bin/glava-config-gui "$tmpdir/pkg/usr/bin/glava-config-gui"
+    # Dateien
+    cp /usr/local/bin/glava-config-gui "$pkgdir/usr/bin/glava-config-gui"
+    chmod 755 "$pkgdir/usr/bin/glava-config-gui"
     cp /usr/share/applications/glava-config-gui.desktop \
-        "$tmpdir/pkg/usr/share/applications/glava-config-gui.desktop"
-    echo "MIT" > "$tmpdir/pkg/usr/share/licenses/glava-config-gui/LICENSE"
+        "$pkgdir/usr/share/applications/glava-config-gui.desktop"
+    chmod 644 "$pkgdir/usr/share/applications/glava-config-gui.desktop"
+    echo "MIT" > "$pkgdir/usr/share/licenses/glava-config-gui/LICENSE"
+    chmod 644 "$pkgdir/usr/share/licenses/glava-config-gui/LICENSE"
 
-    # .PKGINFO
-    cat > "$tmpdir/pkg/.PKGINFO" << EOF
+    # Größe berechnen
+    local pkgsize
+    pkgsize=$(du -sb "$pkgdir" 2>/dev/null | cut -f1 || echo "10240")
+
+    # .PKGINFO schreiben
+    cat > "$pkgdir/.PKGINFO" << EOF
 pkgname = glava-config-gui
 pkgver = 1.0.0-1
 pkgdesc = GTK4/Libadwaita GUI to configure the glava audio visualizer
 url = https://github.com/BlackoneBc/Glava-Config-Gui
 builddate = $(date +%s)
 packager = BlackoneBc <jlm2@freenet.de>
-size = 10240
+size = $pkgsize
 arch = any
 license = MIT
 depend = python
@@ -143,20 +151,33 @@ depend = psmisc
 depend = glava
 EOF
 
-    # .MTREE (Dateiliste, pacman erwartet das)
-    cd "$tmpdir/pkg"
+    # .MTREE erzeugen (pacman verifiziert damit Dateien)
+    cd "$pkgdir"
     bsdtar -czf "$tmpdir/.MTREE" \
         --format=mtree \
         --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
-        . 2>/dev/null || true
+        $(find . -not -name '.PKGINFO' -not -name '.MTREE' | sort) 2>/dev/null || true
 
-    # Paket packen
-    cd "$tmpdir/pkg"
-    bsdtar -czf "$pkgfile" --zstd . .PKGINFO 2>/dev/null || \
-    tar --use-compress-program=zstd -cf "$pkgfile" -C "$tmpdir/pkg" . 2>/dev/null || \
-    bsdtar -cf "$pkgfile" . .PKGINFO
+    if [ -f "$tmpdir/.MTREE" ]; then
+        cp "$tmpdir/.MTREE" "$pkgdir/.MTREE"
+    fi
 
-    # Mit pacman installieren (--force überschreibt falls nötig)
+    # Paket mit zstd bauen (korrekte Methode für Arch)
+    cd "$pkgdir"
+    if command -v zstd &>/dev/null; then
+        bsdtar --no-fflags -czf - \
+            --format=pax \
+            --exclude='.MTREE' \
+            .PKGINFO .MTREE usr 2>/dev/null | \
+        zstd -q -o "$pkgfile" 2>/dev/null || \
+        bsdtar -czf - .PKGINFO usr 2>/dev/null | zstd -q -o "$pkgfile"
+    else
+        # Fallback: tar.gz statt zst
+        pkgfile="$tmpdir/glava-config-gui-1.0.0-1-any.pkg.tar.gz"
+        bsdtar -czf "$pkgfile" .PKGINFO usr 2>/dev/null || \
+        tar -czf "$pkgfile" .PKGINFO usr
+    fi
+
     check_sudo
     sudo pacman -U --noconfirm "$pkgfile"
 
