@@ -108,80 +108,45 @@ register_pacman_package() {
 
     echo -e "${YELLOW}Registering package with pacman...${NC}"
 
-    local pkgname="glava-config-gui"
-    local pkgver="1.0.0-1"
-    local dbdir="/var/lib/pacman/local/${pkgname}-${pkgver}"
-    local builddate
-    builddate=$(date +%s)
-    local pkgsize
-    pkgsize=$(du -sb /usr/bin/glava-config-gui /usr/share/applications/glava-config-gui.desktop 2>/dev/null | awk '{s+=$1} END {print s}')
+    local tmpdir=$(mktemp -d)
+    cd "$tmpdir"
+
+    cat > "$tmpdir/PKGBUILD" << 'EOF'
+pkgname=glava-config-gui
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="GTK4/Libadwaita GUI to configure the glava audio visualizer"
+arch=('any')
+url="https://github.com/BlackoneBc/Glava-Config-Gui"
+license=('MIT')
+depends=('python' 'python-gobject' 'gtk4' 'libadwaita' 'psmisc' 'glava')
+
+package() {
+    install -Dm755 /usr/bin/glava-config-gui \
+        "$pkgdir/usr/bin/glava-config-gui"
+    install -Dm644 /usr/share/applications/glava-config-gui.desktop \
+        "$pkgdir/usr/share/applications/glava-config-gui.desktop"
+    install -Dm644 /dev/null \
+        "$pkgdir/usr/share/licenses/glava-config-gui/LICENSE"
+    echo "MIT License - BlackoneBc" > "$pkgdir/usr/share/licenses/glava-config-gui/LICENSE"
+}
+EOF
+
+    makepkg -sf --noconfirm
+
+    local pkgfile
+    pkgfile=$(ls "$tmpdir"/*.pkg.tar.* 2>/dev/null | head -1)
+
+    if [ -z "$pkgfile" ]; then
+        echo -e "${RED}Package build failed${NC}"
+        rm -rf "$tmpdir"
+        return 1
+    fi
 
     check_sudo
+    sudo pacman -U --noconfirm --overwrite '*' "$pkgfile"
 
-    sudo mkdir -p "$dbdir"
-
-    # DESC – Paketbeschreibung
-    sudo tee "$dbdir/desc" > /dev/null << EOF
-%NAME%
-${pkgname}
-
-%VERSION%
-${pkgver}
-
-%DESC%
-GTK4/Libadwaita GUI to configure the glava audio visualizer
-
-%URL%
-https://github.com/BlackoneBc/Glava-Config-Gui
-
-%ARCH%
-any
-
-%BUILDDATE%
-${builddate}
-
-%INSTALLDATE%
-${builddate}
-
-%PACKAGER%
-BlackoneBc <jlm2@freenet.de>
-
-%SIZE%
-${pkgsize}
-
-%LICENSE%
-MIT
-
-%DEPENDS%
-python
-python-gobject
-gtk4
-libadwaita
-psmisc
-glava
-
-EOF
-
-    # FILES – Dateiliste
-    sudo tee "$dbdir/files" > /dev/null << 'EOF'
-%FILES%
-usr/
-usr/bin/
-usr/bin/glava-config-gui
-usr/share/
-usr/share/applications/
-usr/share/applications/glava-config-gui.desktop
-usr/share/licenses/
-usr/share/licenses/glava-config-gui/
-usr/share/licenses/glava-config-gui/LICENSE
-
-EOF
-
-    # Lizenz anlegen
-    sudo mkdir -p /usr/share/licenses/glava-config-gui
-    echo "MIT License - BlackoneBc - https://github.com/BlackoneBc/Glava-Config-Gui" \
-        | sudo tee /usr/share/licenses/glava-config-gui/LICENSE > /dev/null
-
+    rm -rf "$tmpdir"
     echo -e "${GREEN}✓ Package registered with pacman${NC}"
 }
 
